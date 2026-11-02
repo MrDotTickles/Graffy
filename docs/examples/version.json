@@ -1,0 +1,8 @@
+{
+  "version": "1.0.0",
+  "release_date": "2026-11-02",
+  "release_notes": "• Initial release of Graffy Scientific Graphing Suite\n• Added native macOS and Windows desktop support\n• Automated curve fitting, peak analysis, and publication exports",
+  "download_windows": "https://github.com/MrDotTickles/Graffy/releases/download/v1.0.0/Graffy_Windows.zip",
+  "download_mac": "https://github.com/MrDotTickles/Graffy/releases/download/v1.0.0/Graffy_macOS.zip",
+  "url": "https://github.com/MrDotTickles/Graffy/releases"
+}

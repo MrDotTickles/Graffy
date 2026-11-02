@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+build/
+dist/
+*.spec
+.env
+.env.*
+!.env.example
+Projects/
+*.kgraph
+.DS_Store
+Thumbs.db
+release-report.txt
+.tmp/

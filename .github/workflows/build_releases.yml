@@ -1,0 +1,128 @@
+name: Test, Build & Release Graffy
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: graffy-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Test and build ${{ matrix.asset }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            asset: Windows
+          - os: macos-15
+            asset: macOS_arm64
+          - os: macos-15-intel
+            asset: macOS_x86_64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      QT_QPA_PLATFORM: offscreen
+      MPLBACKEND: Agg
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements-build.txt
+      - name: Record dependency versions
+        run: python -m pip freeze
+      - name: Validate release version
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os, re, omnigraph
+          version = omnigraph.__version__
+          assert re.fullmatch(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)', version), version
+          if os.environ['GITHUB_REF'].startswith('refs/tags/'):
+              assert os.environ['GITHUB_REF_NAME'] == f'v{version}', 'Tag must match omnigraph.__version__'
+          PY
+      - name: Run tests
+        run: python -m pytest tests/ -q
+      - name: Build application
+        run: python scripts/build_app.py
+      - name: Smoke test packaged application
+        shell: bash
+        run: |
+          python - <<'PY'
+          import subprocess, sys, tempfile
+          from pathlib import Path
+          executable = 'dist/Graffy/Graffy.exe' if sys.platform == 'win32' else 'dist/Graffy.app/Contents/MacOS/Graffy'
+          result = subprocess.run([executable, '--smoke-test'], timeout=90)
+          if result.returncode:
+              report = Path(tempfile.gettempdir()) / 'Graffy_smoke_error.txt'
+              if report.exists():
+                  print(report.read_text(encoding='utf-8'))
+          result.check_returncode()
+          PY
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/Graffy/* -DestinationPath dist/Graffy_Windows.zip
+          $appVersion = python -c "import omnigraph; print(omnigraph.__version__)"
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$appVersion" packaging/windows.iss
+          if ($LASTEXITCODE -ne 0) { throw 'Installer compilation failed' }
+      - name: Package macOS
+        if: runner.os == 'macOS'
+        run: python scripts/package_macos.py
+      - name: Report actual package sizes
+        run: python scripts/report_package_size.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Graffy_${{ matrix.asset }}
+          path: |
+            dist/Graffy_*.zip
+            dist/Graffy_*.dmg
+            dist/Graffy_Windows_Setup.exe
+            dist/Graffy_*_Size.txt
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Publish complete release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-assets
+          test -s Graffy_Windows_Setup.exe
+          test -s Graffy_Windows.zip
+          test -s Graffy_macOS_arm64.zip
+          test -s Graffy_macOS_x86_64.zip
+          test -s Graffy_macOS_arm64.dmg
+          test -s Graffy_macOS_x86_64.dmg
+          sha256sum Graffy_* > SHA256SUMS.txt
+          # Hide incomplete uploads from the app's latest-release check.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            test "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = true || { echo 'Release already published; use a new version.'; exit 1; }
+          else
+            gh release create "$TAG" --verify-tag --draft --title "Graffy $TAG" --generate-notes --notes "Download Graffy_Windows_Setup.exe for Windows. On Mac, open the arm64 DMG for Apple Silicon or x86_64 DMG for Intel, then drag Graffy into Applications. No Python installation is needed. Save your work and quit Graffy before updating. These builds are currently unsigned; see the installation guide in the repository."
+          fi
+          gh release upload "$TAG" ./* --clobber
+          gh release edit "$TAG" --draft=false --latest
