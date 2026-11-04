@@ -15,6 +15,11 @@ QWidget { font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif; color: @
 QMainWindow, QDialog { background: @bg; }
 QLabel { font-weight: 400; background: transparent; }
 QLabel[role="muted"] { color: @muted; }
+QWidget#UpdateBanner { background: #ffefb0; border-bottom: 2px solid #986400; }
+QWidget#UpdateBanner QLabel { color: #332500; font-weight: 600; }
+QWidget#UpdateBanner QPushButton { background: #fff9e5; color: #332500; border: 1px solid #986400; }
+QWidget#UpdateBanner QPushButton#UpdateBannerAction { background: #332500; color: #ffffff; border-color: #332500; }
+QWidget#UpdateBanner QPushButton:hover { background: #ffe28a; color: #332500; }
 QLabel[role="heading"] { font-size: 18px; font-weight: 700; }
 QLabel[role="eyebrow"] { color: @muted; font-size: 11px; font-weight: 700; }
 QMenuBar { background: @surface; padding: 3px 8px; border-bottom: 1px solid @line; }

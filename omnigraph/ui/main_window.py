@@ -11,7 +11,7 @@ from typing import Optional, Dict
 from PyQt6.QtWidgets import (
     QMainWindow, QTabWidget, QDockWidget, QToolBar, QToolButton,
     QMenu, QMessageBox, QFileDialog, QInputDialog, QLabel,
-    QStatusBar, QApplication, QWidget, QSizePolicy, QStackedWidget, QVBoxLayout, QPushButton, QComboBox
+    QStatusBar, QApplication, QWidget, QSizePolicy, QStackedWidget, QVBoxLayout, QPushButton, QComboBox, QHBoxLayout
 )
 from PyQt6.QtCore import Qt, pyqtSlot, QSize, QSettings
 from PyQt6.QtGui import QAction, QKeySequence, QIcon, QShortcut, QPalette, QColor
@@ -340,7 +340,30 @@ class MainWindow(QMainWindow):
         empty_layout.addWidget(reveal,0,Qt.AlignmentFlag.AlignCenter)
         empty_layout.addStretch()
         self.workspace_stack.addWidget(empty)
-        self.setCentralWidget(self.workspace_stack)
+        central=QWidget()
+        central_layout=QVBoxLayout(central)
+        central_layout.setContentsMargins(0,0,0,0)
+        central_layout.setSpacing(0)
+        self.update_banner=QWidget()
+        self.update_banner.setObjectName("UpdateBanner")
+        notice=QHBoxLayout(self.update_banner)
+        notice.setContentsMargins(14,10,14,10)
+        self.update_banner_label=QLabel()
+        self.update_banner_label.setWordWrap(True)
+        self.update_banner_label.setAccessibleName("Software update available")
+        notice.addWidget(self.update_banner_label,1)
+        self.update_banner_button=QPushButton("View update")
+        self.update_banner_button.setObjectName("UpdateBannerAction")
+        self.update_banner_button.clicked.connect(self._open_available_update)
+        notice.addWidget(self.update_banner_button)
+        self.update_banner_later=QPushButton("Later")
+        self.update_banner_later.setToolTip("Hide this notice until the next session")
+        self.update_banner_later.clicked.connect(self.update_banner.hide)
+        notice.addWidget(self.update_banner_later)
+        self.update_banner.hide()
+        central_layout.addWidget(self.update_banner)
+        central_layout.addWidget(self.workspace_stack,1)
+        self.setCentralWidget(central)
 
         # 2. Docks
         # Left Dock: Project Explorer
@@ -2204,8 +2227,16 @@ class MainWindow(QMainWindow):
         if getattr(self, "_notified_update", None) == info.latest_version:
             return
         self._notified_update = info.latest_version
+        self._available_update=info
+        self.update_banner_label.setText(f"New update available — Graffy {info.latest_version}. Save your work before installing.")
+        self.update_banner.show()
+
+    def _open_available_update(self):
+        info=getattr(self,"_available_update",None)
+        if info is None:
+            return
         from omnigraph.ui.dialogs.update_dialog import UpdateDialog
-        dlg = UpdateDialog(self, auto_check=False)
+        dlg=UpdateDialog(self,auto_check=False)
         dlg._on_update_result(info)
         dlg.exec()
 

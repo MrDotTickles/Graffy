@@ -144,7 +144,7 @@ def test_startup_checks_default_on_and_respect_opt_out(monkeypatch):
     assert updater.get_check_on_startup()
 
 
-def test_startup_notification_only_for_new_versions(monkeypatch):
+def test_startup_notification_only_for_new_versions(monkeypatch,app):
     from omnigraph.ui.main_window import MainWindow
     from omnigraph.ui.dialogs import update_dialog
 
@@ -160,11 +160,11 @@ def test_startup_notification_only_for_new_versions(monkeypatch):
         def exec(self):
             pass
 
-    class Window:
-        pass
 
     monkeypatch.setattr(update_dialog, "UpdateDialog", Dialog)
-    window = Window()
+    window = MainWindow()
+    window.show()
+    app.processEvents()
     info = updater.UpdateInfo("1.0.0", "2.0.0", False, "", "", "")
     MainWindow._notify_update(window, info)
     assert not shown
@@ -175,4 +175,16 @@ def test_startup_notification_only_for_new_versions(monkeypatch):
     info.error = None
     MainWindow._notify_update(window, info)
     MainWindow._notify_update(window, info)
+    assert not shown
+    assert window.update_banner.isVisible()
+    assert '2.0.0' in window.update_banner_label.text()
+    window.update_banner_button.click()
     assert shown == ["2.0.0"]
+    window.update_banner_later.click()
+    assert not window.update_banner.isVisible()
+    MainWindow._notify_update(window,info)
+    assert not window.update_banner.isVisible()
+    info.latest_version="2.0.1"
+    MainWindow._notify_update(window,info)
+    assert window.update_banner.isVisible()
+    window.close()
