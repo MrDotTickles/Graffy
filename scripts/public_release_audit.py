@@ -65,7 +65,6 @@ def audit_package(root):
         if private_path(name,True):findings.append({"path":name,"rule":"private-file"})
         findings+=inspect_bytes(path.read_bytes(),name)
     # PyInstaller stores app strings inside compressed code, not plain files.
-    from PyInstaller.archive.readers import CArchiveReader
     import types
     executables=list(root.rglob("Graffy.exe"))+[p for p in root.rglob("Graffy") if p.is_file() and p.parent.name=="MacOS"]
     def inspect_code(code,name):
@@ -78,6 +77,7 @@ def audit_package(root):
                 findings.extend(inspect_bytes(constant.encode() if isinstance(constant,str) else constant,name))
     for executable in executables:
         try:
+            from PyInstaller.archive.readers import CArchiveReader
             archive=CArchiveReader(str(executable)).open_embedded_archive("PYZ.pyz")
             for name in archive.toc:
                 if name.startswith("omnigraph"):

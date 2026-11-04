@@ -105,3 +105,16 @@ def test_public_toolbar_icons_are_allowed_but_user_pdfs_are_not():
     assert not private_path('_internal/matplotlib/mpl-data/images/back.pdf',package=True)
     assert private_path('_internal/matplotlib/mpl-data/images/private-report.pdf',package=True)
     assert private_path('exports/back.pdf',package=True)
+
+
+def test_notice_checks_do_not_require_build_tools(tmp_path,monkeypatch):
+    import builtins
+    from scripts.public_release_audit import audit_package
+    original=builtins.__import__
+    def without_builder(name,*args,**kwargs):
+        if name.startswith('PyInstaller'):raise ImportError('Build tool intentionally unavailable')
+        return original(name,*args,**kwargs)
+    monkeypatch.setattr(builtins,'__import__',without_builder)
+    (tmp_path/'_internal').mkdir()
+    findings,_=audit_package(tmp_path)
+    assert {'path':'LICENSE','rule':'missing-distribution-notice'} in findings
