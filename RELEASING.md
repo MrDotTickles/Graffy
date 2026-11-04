@@ -1,8 +1,9 @@
 # Publish Graffy from this folder
 
 This folder already tracks `https://github.com/MrDotTickles/Graffy.git` on `main`.
-The current source version is `1.0.3`; choose an unused higher version for the next release (for example **1.0.4**). The release helper also checks existing Git tags.
-**Graffy v1.0.3 is published**, including the Windows installer and both Mac DMGs. Downloads are available from https://github.com/MrDotTickles/Graffy/releases/latest and the Graffy website.
+Read the current source version in `omnigraph/__init__.py`, and choose an unused higher version for your next release. The helper also checks existing Git tags. Examples below use **1.2.3**; use it only if it is higher than your current version and release tags.
+
+Packaged downloads are available from [the latest release](https://github.com/MrDotTickles/Graffy/releases/latest) and the Graffy website. A source push runs tests; a new version tag builds and publishes the app.
 
 ## 1. Upload these changes
 
@@ -21,7 +22,7 @@ A normal push runs tests without publishing a new version.
 ## 2. Publish the app
 
 1. Double-click **scripts/Release_Graffy.bat** in this folder.
-2. Enter a version higher than the source version and all existing release tags, such as **1.0.4** if it is available.
+2. Enter a version higher than the source version and all existing release tags, such as **1.2.3** if it is available.
 3. The helper checks Git and your author identity, updates the app's version, runs
    every test, commits that version, creates its tag, and pushes the branch and tag together.
 4. Open [GitHub Actions](https://github.com/MrDotTickles/Graffy/actions).
@@ -86,7 +87,7 @@ py -3.13 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements-build.txt
 .\.venv\Scripts\python.exe main.py
 .\.venv\Scripts\python.exe -m pytest tests/ -q
-.\.venv\Scripts\python.exe scripts/release.py 1.0.4
+.\.venv\Scripts\python.exe scripts/release.py 1.2.3
 ```
 
 On macOS, use `python3 -m venv .venv`, then `.venv/bin/python` for the commands.
