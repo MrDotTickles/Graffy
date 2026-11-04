@@ -82,3 +82,19 @@ def test_release_gate_covers_json_secrets_and_credential_stores():
     assert result and secret not in str(result)
     for name in ('.npmrc','.netrc','id_ed25519','data/private.sqlite','config.pem'):
         assert private_path(name)
+
+
+def test_vendor_license_does_not_substitute_for_application_license(tmp_path):
+    from scripts.public_release_audit import audit_package
+    resource=tmp_path/'_internal';vendor=resource/'thirdparty';vendor.mkdir(parents=True)
+    (vendor/'LICENSE').write_text('A vendor license is not the application license')
+    findings,_=audit_package(tmp_path)
+    assert {'path':'LICENSE','rule':'missing-distribution-notice'} in findings
+
+
+def test_package_requires_exact_application_license(tmp_path):
+    from scripts.public_release_audit import audit_package
+    resource=tmp_path/'_internal';resource.mkdir()
+    (resource/'LICENSE').write_text('Not the selected application license')
+    findings,_=audit_package(tmp_path)
+    assert {'path':'LICENSE','rule':'wrong-application-license'} in findings

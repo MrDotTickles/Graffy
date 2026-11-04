@@ -79,9 +79,17 @@ def audit_package(root):
                     inspect_code(archive.extract(name),name)
         except Exception:
             findings.append({"path":str(executable.relative_to(root)),"rule":"cannot-inspect-app-archive"})
+    resources=root/"Contents"/"Resources" if root.suffix==".app" else root/"_internal"
+    if not resources.is_dir():
+        findings.append({"path":str(root),"rule":"unknown-package-layout"})
     for required in ("LICENSE","PRIVACY.md","SECURITY.md","THIRD_PARTY_NOTICES.md","LICENSES/DEPENDENCIES.json"):
-        if not any(p.as_posix().endswith(required) for p in root.rglob(Path(required).name)):
+        if not (resources/required).is_file():
             findings.append({"path":required,"rule":"missing-distribution-notice"})
+    license_file=resources/"LICENSE"
+    if license_file.is_file():
+        expected=(Path(__file__).resolve().parents[1]/"LICENSE").read_text(encoding="utf-8")
+        if license_file.read_text(encoding="utf-8")!=expected:
+            findings.append({"path":"LICENSE","rule":"wrong-application-license"})
     return findings,count
 
 
