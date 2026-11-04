@@ -395,6 +395,10 @@ class UpdateDialog(QDialog):
         if self.last_info:
             target_url = self.last_info.html_url or self.last_info.download_url
             if target_url:
+                parsed=urlparse(target_url)
+                if parsed.scheme.lower()!="https" or not parsed.hostname or parsed.username or parsed.password:
+                    QMessageBox.warning(self,"Invalid update link","Update web links must use HTTPS without embedded credentials.")
+                    return
                 QDesktopServices.openUrl(QUrl(target_url))
 
     def _save_settings(self):

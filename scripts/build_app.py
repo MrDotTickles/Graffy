@@ -28,13 +28,18 @@ def main():
                str(ROOT / "omnigraph" / "ui" / "styles" / "icons" / icon),
                "--collect-data", "omnigraph", "--distpath", args.distpath,
                "--workpath", args.workpath, "--specpath", args.specpath]
+    from collect_licenses import collect
+    licenses=collect(ROOT/"build"/"licenses")
+    for filename in ("LICENSE","PRIVACY.md","SECURITY.md","THIRD_PARTY_NOTICES.md"):
+        command.extend(["--add-data",str(ROOT/filename)+os.pathsep+"."])
+    command.extend(["--add-data",str(licenses)+os.pathsep+"LICENSES"])
     if sys.platform == "darwin":
         command.extend(["--osx-bundle-identifier", "com.graffy.desktop"])
     for module in ("pytest", "_pytest", "tkinter", "IPython",
                    "PIL.AvifImagePlugin", "PIL._avif"):
         command.extend(["--exclude-module", module])
     for module in ("scipy.special", "scipy.optimize", "scipy.signal", "scipy.stats",
-                   "openpyxl", "PyQt6", "matplotlib", "matplotlib.backends.backend_pdf",
+                   "openpyxl", "defusedxml", "PyQt6", "matplotlib", "matplotlib.backends.backend_pdf",
                    "matplotlib.backends.backend_svg", "matplotlib.backends.backend_ps"):
         command.extend(["--hidden-import", module])
     subprocess.run([*command, str(ROOT / "main.py")], cwd=ROOT, env=env, check=True)

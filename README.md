@@ -19,15 +19,14 @@ analyze peaks, and export publication-ready figures from one desktop app.
 | Mac with Apple Silicon (M-series) | [**Download for Mac — Apple Silicon**](https://github.com/MrDotTickles/Graffy/releases/latest/download/Graffy_macOS_arm64.dmg) |
 | Mac with an Intel processor | [**Download for Mac — Intel**](https://github.com/MrDotTickles/Graffy/releases/latest/download/Graffy_macOS_x86_64.dmg) |
 
-**Measured Windows build:** 71.1 MB to download; about 241.1 MB of app files after installation.
+**Measured Windows build:** about 72 MB to download; about 243 MB of app files after installation.
 Python and scientific libraries are included. [Size details](docs/PACKAGE_SIZE.md).
 
 [All releases and portable downloads](https://github.com/MrDotTickles/Graffy/releases/latest)
 · [Installation help](docs/INSTALLING.md)
 · [Report a problem](https://github.com/MrDotTickles/Graffy/issues)
 
-These download links become available after the first successful packaged release.
-The existing `v1.0.0` tag is not replaced by this setup.
+Use the latest published release. Older tags are retained for history.
 
 **Install:** On Windows, open the installer and follow the steps. On Mac, open the
 DMG and drag Graffy into Applications. These builds are currently unsigned, so your
@@ -58,7 +57,7 @@ location; Mac users replace the app in Applications. Saved project files are sep
 **[Start here: upload your changes and publish a release](RELEASING.md).**
 
 Commit changes, double-click `scripts/Release_Graffy.bat`, and enter a new version such as
-`1.0.1`. GitHub tests and builds Windows, Apple Silicon Mac, and Intel Mac packages
+`1.2.3` if it is higher than your current version. GitHub tests and builds Windows, Apple Silicon Mac, and Intel Mac packages
 before publishing a complete release. Keep the repository public for public downloads.
 
 To run from source, install Python 3.13, create a virtual environment, and install
@@ -93,3 +92,9 @@ The redesigned desktop workflow and validation notes are documented in [Desktop 
 Chart colors, legend appearance, direct series styling, and contrast improvements: [UI polish](docs/UI_POLISH.md).
 
 Change an existing chart without replotting: [plot switching guide](docs/PLOT_SWITCHING.md).
+
+## License, privacy and security
+
+Graffy is **GPL-3.0-only** open-source software; see [LICENSE](LICENSE) and [third-party notices](THIRD_PARTY_NOTICES.md). Projects and imports are processed locally; update checks contact GitHub. See [privacy information](PRIVACY.md) and [security reporting and release controls](SECURITY.md).
+
+These are unsigned preview builds. Trusted Windows signing, Apple signing/notarization and clean-machine installation/upgrade checks remain launch requirements for a polished general-public rollout. See [launch readiness](docs/LAUNCH_READINESS.md).

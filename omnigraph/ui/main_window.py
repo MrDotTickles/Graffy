@@ -859,7 +859,7 @@ class MainWindow(QMainWindow):
         sw.undo_stack.canUndoChanged.connect(self._update_undo_redo_actions)
         sw.undo_stack.canRedoChanged.connect(self._update_undo_redo_actions)
         if self.zoom_level*self.interface_scale != 1.0:
-            sw.set_zoom(self.zoom_level if isinstance(w,GraphViewWidget) else self.zoom_level*self.interface_scale)
+            sw.set_zoom(self.zoom_level*self.interface_scale)
         idx = self.center_tabs.addTab(sw, icon("sheet"), sheet.name)
         self.tab_metadata[idx] = ("sheet", sheet.name, wb.name, sw)
         return idx
@@ -872,7 +872,7 @@ class MainWindow(QMainWindow):
         gw.curves_changed.connect(self._on_graph_curves_changed)
         gw.request_jump_to_sheet.connect(lambda s, w: self._on_explorer_item_activated("sheet", s, w))
         if hasattr(self, "zoom_level") and self.zoom_level != 1.0:
-            gw.set_zoom(self.zoom_level if isinstance(w,GraphViewWidget) else self.zoom_level*self.interface_scale)
+            gw.set_zoom(self.zoom_level)
         idx = self.center_tabs.addTab(gw, icon("chart"), graph.title)
         self.tab_metadata[idx] = ("graph", graph.title, graph.id, gw)
         return idx
@@ -880,7 +880,7 @@ class MainWindow(QMainWindow):
     def _add_report_view(self, rep):
         rw = ReportViewWidget(rep, self)
         if self.zoom_level*self.interface_scale != 1.0:
-            rw.set_zoom(self.zoom_level if isinstance(w,GraphViewWidget) else self.zoom_level*self.interface_scale)
+            rw.set_zoom(self.zoom_level*self.interface_scale)
         idx = self.center_tabs.addTab(rw, icon("report"), rep.title)
         self.tab_metadata[idx] = ("report", rep.title, rep.id, rw)
         return idx
@@ -2253,7 +2253,9 @@ class MainWindow(QMainWindow):
         msg.setIconPixmap(render_graffy_pixmap(64))
         msg.setText("<h3>Graffy</h3><b>Intuitive Scientific Graphing & Data Analysis Suite</b>")
         msg.setInformativeText(
-            "Inspired by OriginLab, Graffy delivers fast, publication-grade "
+            "Licensed under GNU GPL version 3. Source code: github.com/MrDotTickles/Graffy. "
+            "Dependency licenses and privacy information are included with the app.\n\n"
+            "Graffy delivers scientific "
             "2D graphing, linear and non-linear regression, peak deconvolution, "
             "signal smoothing, and statistical hypothesis testing.\n\n"
             "Built with PyQt6, Matplotlib, and SciPy."

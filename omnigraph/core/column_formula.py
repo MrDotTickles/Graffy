@@ -4,6 +4,8 @@ Supports numpy functions, math constants, column references (e.g. col(A), col('A
 Origin-style row indices (i, row), scientific transformations, and friendly error reporting.
 """
 
+import ast
+from types import SimpleNamespace
 import math
 import re
 from typing import Optional, Any, Dict
@@ -105,8 +107,45 @@ class FormulaEvaluator:
         "prev": _lag_array,
         "lag": _lag_array,
         # Numpy alias
-        "np": np,
+        "np": SimpleNamespace(**{name:getattr(np,name) for name in (
+            "sin","cos","tan","arcsin","arccos","arctan","arctan2","sinh","cosh","tanh",
+            "deg2rad","rad2deg","exp","exp2","log","log10","log2","sqrt","cbrt","abs","power",
+            "hypot","floor","ceil","round","trunc","pi","e","nan","inf","mean","std","var",
+            "sum","min","max","median","nanmean","nanstd","nanvar","nansum","nanmin","nanmax",
+            "nanmedian","diff","cumsum","nancumsum","gradient","clip","where","minimum","maximum",
+            "isnan","isfinite","array","arange","linspace","zeros","ones","full")}),
     }
+
+    @staticmethod
+    def _validate_expression(expression):
+        if len(expression)>4096:
+            raise ValueError("Formula is too long (maximum 4096 characters).")
+        try:
+            tree=ast.parse(expression,mode="eval")
+        except (SyntaxError,RecursionError) as error:
+            raise ValueError("Incomplete or invalid formula syntax.") from error
+        allowed=(ast.Expression,ast.BinOp,ast.UnaryOp,ast.BoolOp,ast.Compare,ast.IfExp,
+                 ast.Call,ast.Name,ast.Load,ast.Constant,ast.List,ast.Tuple,ast.Subscript,
+                 ast.Slice,ast.keyword,ast.Attribute,ast.Add,ast.Sub,ast.Mult,ast.Div,
+                 ast.FloorDiv,ast.Mod,ast.Pow,ast.USub,ast.UAdd,ast.Not,ast.And,ast.Or,
+                 ast.Eq,ast.NotEq,ast.Lt,ast.LtE,ast.Gt,ast.GtE,ast.BitAnd,ast.BitOr,ast.Invert)
+        approved_numpy=vars(FormulaEvaluator.SAFE_MATH["np"])
+        for node in ast.walk(tree):
+            if not isinstance(node,allowed):
+                raise ValueError("Only mathematical expressions and approved functions are allowed.")
+            if isinstance(node,ast.Name) and node.id.startswith("_"):
+                raise ValueError("Private Python attributes are not available in formulas.")
+            if isinstance(node,ast.Attribute):
+                if not (isinstance(node.value,ast.Name) and node.value.id=="np" and node.attr in approved_numpy):
+                    raise ValueError("Only approved np math functions are available; file and system access is disabled.")
+            if isinstance(node,ast.Call):
+                if not isinstance(node.func,(ast.Name,ast.Attribute)):
+                    raise ValueError("Indirect function calls are not allowed.")
+                if isinstance(node.func,ast.Name) and node.func.id not in {*FormulaEvaluator.SAFE_MATH,"col","Col","COL"}:
+                    raise ValueError("Only approved math functions may be called.")
+                if any(keyword.arg is None for keyword in node.keywords):
+                    raise ValueError("Expanded keyword arguments are not allowed.")
+        return tree
 
     @staticmethod
     def preprocess_formula(formula_str: str) -> str:
@@ -149,6 +188,8 @@ class FormulaEvaluator:
         cleaned_str = FormulaEvaluator.preprocess_formula(formula_str)
         if not cleaned_str:
             raise ValueError("Formula expression is empty.")
+
+        expression_tree=FormulaEvaluator._validate_expression(cleaned_str)
 
         # Determine target row count
         if target_length is None:
@@ -230,7 +271,7 @@ class FormulaEvaluator:
         try:
             # Ignore zero division warnings in numpy during evaluation
             with np.errstate(divide='ignore', invalid='ignore'):
-                result = eval(cleaned_str, {"__builtins__": {}}, local_scope)
+                result = eval(compile(expression_tree,"<formula>","eval"), {"__builtins__": {}}, local_scope)
         except NameError as ne:
             var_match = re.search(r"name '([^']+)' is not defined", str(ne))
             var_name = var_match.group(1) if var_match else "unknown"

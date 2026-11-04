@@ -7,6 +7,7 @@ AppId={{2CD4E23B-E1B3-47AF-BCBF-638825724688}
 AppName=Graffy
 AppVersion={#AppVersion}
 AppPublisher=Graffy
+LicenseFile=..\LICENSE
 AppPublisherURL=https://github.com/MrDotTickles/Graffy
 DefaultDirName={localappdata}\Programs\Graffy
 DefaultGroupName=Graffy

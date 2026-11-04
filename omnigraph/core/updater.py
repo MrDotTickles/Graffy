@@ -171,6 +171,12 @@ def set_check_on_startup(enabled: bool):
     settings.setValue("updater/check_on_startup", enabled)
 
 
+def _require_https(url):
+    parsed=urlparse(url)
+    if parsed.scheme.lower()!="https" or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("Remote updates require HTTPS without embedded credentials.")
+
+
 def fetch_update_manifest(manifest_url: str, timeout: float = 6.0) -> dict:
     """
     Fetches and parses the update data from GitHub API, HTTP JSON, or local file.
@@ -186,6 +192,7 @@ def fetch_update_manifest(manifest_url: str, timeout: float = 6.0) -> dict:
 
     # 2. Remote HTTP/HTTPS URL (including GitHub Releases API)
     clean_url = normalize_cloud_url(manifest_url)
+    _require_https(clean_url)
     req = urllib.request.Request(
         clean_url,
         headers={
@@ -194,7 +201,10 @@ def fetch_update_manifest(manifest_url: str, timeout: float = 6.0) -> dict:
         }
     )
     with urllib.request.urlopen(req, timeout=timeout) as response:
-        raw_bytes = response.read()
+        _require_https(response.geturl() if hasattr(response,"geturl") else clean_url)
+        raw_bytes = response.read(4*1024*1024+1)
+        if len(raw_bytes)>4*1024*1024:
+            raise ValueError("Update manifest is too large.")
         return json.loads(raw_bytes.decode("utf-8"))
 
 
@@ -358,11 +368,13 @@ class FileDownloadWorker(QThread):
     def run(self):
         partial_path = None
         try:
+            _require_https(self.url)
             req = urllib.request.Request(
                 self.url,
                 headers={"User-Agent": f"Graffy-Downloader/{omnigraph.__version__} ({sys.platform})"}
             )
             with urllib.request.urlopen(req, timeout=30.0) as resp:
+                _require_https(resp.geturl() if hasattr(resp,"geturl") else self.url)
                 total_size = int(resp.headers.get("Content-Length", 0))
                 downloaded = 0
                 chunk_size = 64 * 1024  # 64 KB chunks
