@@ -98,3 +98,10 @@ def test_package_requires_exact_application_license(tmp_path):
     (resource/'LICENSE').write_text('Not the selected application license')
     findings,_=audit_package(tmp_path)
     assert {'path':'LICENSE','rule':'wrong-application-license'} in findings
+
+
+def test_public_toolbar_icons_are_allowed_but_user_pdfs_are_not():
+    from scripts.public_release_audit import private_path
+    assert not private_path('_internal/matplotlib/mpl-data/images/back.pdf',package=True)
+    assert private_path('_internal/matplotlib/mpl-data/images/private-report.pdf',package=True)
+    assert private_path('exports/back.pdf',package=True)

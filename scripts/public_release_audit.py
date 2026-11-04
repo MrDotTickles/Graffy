@@ -28,7 +28,12 @@ def private_path(name, package=False):
     if path.suffix.lower()==".env":return True
     if not package and path.suffix.lower()==".pem":return True
     if path.name.lower().startswith(".env") and path.name!=".env.example":return True
-    if path.suffix.lower() in PRIVATE_SUFFIXES:return True
+    if path.suffix.lower() in PRIVATE_SUFFIXES:
+        # Matplotlib ships these public toolbar icons in several image formats.
+        icons={"back.pdf","filesave.pdf","forward.pdf","hand.pdf","help.pdf","home.pdf",
+               "matplotlib.pdf","move.pdf","qt4_editor_options.pdf","subplots.pdf","zoom_to_rect.pdf"}
+        vendor_icon=package and path.name.lower() in icons and "/matplotlib/mpl-data/images/" in "/"+path.as_posix().lower()
+        if not vendor_icon:return True
     if path.name.lower().startswith(("credentials", "service-account")) and path.suffix==".json":return True
     if package and path.suffix.lower() in {".csv", ".xlsx", ".xls", ".tsv"}:
         # These are public upstream demonstration files, not application user data.
