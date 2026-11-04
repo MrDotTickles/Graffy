@@ -1,8 +1,8 @@
 # Publish Graffy from this folder
 
 This folder already tracks `https://github.com/MrDotTickles/Graffy.git` on `main`.
-The current source version is `1.0.1`; choose an unused higher version for the next release (for example **1.0.2**). The release helper also checks existing Git tags.
-No new release has been published by this setup.
+The current source version is `1.0.2`; choose an unused higher version for the next release (for example **1.0.3**). The release helper also checks existing Git tags.
+**Graffy v1.0.2 is published**, including the Windows installer and both Mac DMGs. Downloads are available from https://github.com/MrDotTickles/Graffy/releases/latest and the Graffy website.
 
 ## 1. Upload these changes
 
@@ -21,7 +21,7 @@ A normal push runs tests without publishing a new version.
 ## 2. Publish the app
 
 1. Double-click **scripts/Release_Graffy.bat** in this folder.
-2. Enter a version higher than the source version and all existing release tags, such as **1.0.2** if it is available.
+2. Enter a version higher than the source version and all existing release tags, such as **1.0.3** if it is available.
 3. The helper checks Git and your author identity, updates the app's version, runs
    every test, commits that version, creates its tag, and pushes the branch and tag together.
 4. Open [GitHub Actions](https://github.com/MrDotTickles/Graffy/actions).
@@ -86,7 +86,7 @@ py -3.13 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements-build.txt
 .\.venv\Scripts\python.exe main.py
 .\.venv\Scripts\python.exe -m pytest tests/ -q
-.\.venv\Scripts\python.exe scripts/release.py 1.0.2
+.\.venv\Scripts\python.exe scripts/release.py 1.0.3
 ```
 
 On macOS, use `python3 -m venv .venv`, then `.venv/bin/python` for the commands.

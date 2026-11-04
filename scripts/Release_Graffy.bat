@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0.."
 echo Graffy release helper - commit your code changes before continuing.
-set /p "GRAFFY_VERSION=New version (example 1.0.1): "
+set /p "GRAFFY_VERSION=New version (must be higher than your last release): "
 if not defined GRAFFY_VERSION exit /b 1
 if not exist ".venv\Scripts\python.exe" (
     call "%~dp0Setup_Graffy.bat"
