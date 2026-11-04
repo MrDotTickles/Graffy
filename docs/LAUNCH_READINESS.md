@@ -1,6 +1,6 @@
 # Public launch requirements
 
-Updated November 4, 2026. This replaces the older launch notes. The project is being prepared as a security-hardened **unsigned public preview**. A broad, polished general-public launch still needs publisher signing/notarization and real-machine installation/upgrade checks.
+Updated November 4, 2026. This replaces the older launch notes. The owner selected a clearly labeled security-hardened **unsigned public preview**, and v1.0.5 is published. A broad, polished general-public launch still needs publisher signing/notarization and real-machine installation/upgrade checks.
 
 ## Mandatory gates before publishing any new app version
 
@@ -15,7 +15,7 @@ Updated November 4, 2026. This replaces the older launch notes. The project is b
 - [x] Run dependency advisory auditing and all-history secret scanning in CI before release builds.
 - [x] Audit each built Windows/Mac app before packaging; publish only a complete set of release assets.
 - [x] Pin GitHub Actions to immutable commits; enable dependency monitoring, secret push protection and private vulnerability reporting.
-- [ ] Verify the final version's entire GitHub release workflow succeeds. Local checks alone do not certify the downloaded release.
+- [x] v1.0.5 release workflow 41925096223 succeeded. Each Windows/Mac job passed 489 tests plus package audits and compiled smoke checks. Public installer downloads were checked and the Windows installer checksum was verified.
 
 ## Requirements still needed for a full public launch
 

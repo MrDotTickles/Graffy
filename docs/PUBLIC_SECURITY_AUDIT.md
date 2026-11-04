@@ -17,7 +17,13 @@ Review date: November 4, 2026. Scope: current tracked source, reachable local Gi
 
 ## Validation
 
-The complete suite passed 485 tests after runtime fixes, and the final release-gate extension passed its focused security tests. The final version's release helper and Windows/Mac CI repeat the complete suite; use those results for the exact shipped version. Compiled smoke, license inclusion and package privacy checks must all pass before publishing.
+Release v1.0.5 passed **489 tests on each of Windows, Apple Silicon Mac and Intel Mac**, followed by packaged-app scientific/project/spreadsheet/export checks. The mandatory history/source/dependency audit passed. Final artifact inspection checked 1,291 Windows files and 738 files per Mac app with no findings. All three public installer links returned HTTP 200. The Windows installer is 71,667,577 bytes; its SHA-256 matched the published checksum: `E1CD0CFE35CA4A15E20D0F52E96C104F839DAC4F6B7A4FFB4F948375425EC27C`.
+
+The main-branch developer tests also pass independently of packaging tools. Future local commits use the authenticated GitHub account's no-reply address. Historical Git author identities remain public; published history was not destructively rewritten.
+
+The website's privacy, security and GPL links were published as Site version 6. Its source history was scanned before the notice-only footer change; the added links/favicon were reviewed and static asset references validated. No personal data-upload feature was added.
+
+Evidence: [release workflow](https://github.com/MrDotTickles/Graffy/actions/runs/41925096223), [public preview](https://github.com/MrDotTickles/Graffy/releases/tag/v1.0.5). Redacted local scan reports remain in ignored `.tmp/public-audit/` for review; they are not application resources.
 
 ## Remaining launch limits
 

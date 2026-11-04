@@ -19,7 +19,7 @@ analyze peaks, and export publication-ready figures from one desktop app.
 | Mac with Apple Silicon (M-series) | [**Download for Mac — Apple Silicon**](https://github.com/MrDotTickles/Graffy/releases/latest/download/Graffy_macOS_arm64.dmg) |
 | Mac with an Intel processor | [**Download for Mac — Intel**](https://github.com/MrDotTickles/Graffy/releases/latest/download/Graffy_macOS_x86_64.dmg) |
 
-**Measured Windows build:** about 72 MB to download; about 243 MB of app files after installation.
+**Measured Windows build:** about 72 MB to download; about 244 MB of app files after installation.
 Python and scientific libraries are included. [Size details](docs/PACKAGE_SIZE.md).
 
 [All releases and portable downloads](https://github.com/MrDotTickles/Graffy/releases/latest)
