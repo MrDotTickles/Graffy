@@ -6,4 +6,4 @@ Use the **UI 100%** selector at the bottom right, or **View → Interface size**
 
 For waterfall/stacked spectra, open **Edit chart → Style**. **Stack spectra (waterfall)** enables the offsets, **Vertical spacing** adjusts them (zero means automatic), and **Show intensity axis** optionally restores the vertical axis. Waterfall plots hide that axis by default because the displayed values include offsets. Other plot types keep their normal Y axes. This choice is saved in projects; data values are preserved.
 
-Validation: full suite 462 passed before the final icon scaling adjustment; final focused checks 22 passed including persistence, resizing, styles and waterfall rendering. Release validation runs the final complete suite on Windows and both Mac architectures.
+Validation: **463 tests passed**, and Windows, Apple Silicon Mac and Intel Mac release jobs passed their tests and compiled-app scientific/project/spreadsheet/export checks. Wide, compact and 200% interface layouts were rendered. Release v1.0.3 is published; all three website downloads were verified.
