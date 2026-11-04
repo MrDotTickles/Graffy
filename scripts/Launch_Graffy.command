@@ -4,7 +4,7 @@
 # ==============================================================================
 
 # Change to the directory where this script is located
-cd "$(dirname "$0")" || exit 1
+cd "$(dirname "$0")/.." || exit 1
 
 echo "======================================================================"
 echo " Starting Graffy - Scientific Graphing & Data Analysis"

@@ -115,7 +115,7 @@ class PlotManager:
         is_stacked = layout_mode in ("stacked_2x1", "grid_2x1")
         is_grid_1x2 = layout_mode == "grid_1x2"
         is_grid_2x2 = layout_mode in ("grid_2x2", "figure_1")
-        has_secondary = (layout_mode == "single") and any(c.axis == "secondary" for c in self.model.curves if getattr(c, "visible", True))
+        has_secondary = (layout_mode in ("single","twin_x")) and any(c.axis == "secondary" for c in self.model.curves if getattr(c, "visible", True))
 
         theme = THEMES.get(self.model.theme, THEMES["Origin Classic"])
         lbl_color = theme.get("axes.labelcolor", "#000000")
@@ -233,7 +233,8 @@ class PlotManager:
             )
             if self.ax2:
                 self.ax2.spines["right"].set_visible(True)
-                self.ax2.tick_params(axis="y", direction=self.model.tick_direction)
+                self.ax2.tick_params(axis="y", direction=self.model.tick_direction, color=lbl_color, labelcolor=lbl_color)
+                self.ax2.spines["right"].set_color(lbl_color)
             self.ax.set_xlabel(self.model.x_title, color=lbl_color, fontweight="bold" if "Classic" in self.model.theme else "normal")
             self.axes = [self.ax]
 
@@ -282,9 +283,12 @@ class PlotManager:
             if not getattr(curve, "visible", True):
                 continue
 
-            # Assign color from palette only if empty or explicitly 'auto'
+            # Resolve automatic colors without changing the saved series settings.
+            render_curve=curve
             if not curve.color or curve.color == "auto":
-                curve.color = palette[i % len(palette)]
+                from copy import copy
+                render_curve=copy(curve)
+                render_curve.color=palette[i % len(palette)]
 
             # Fetch unmasked data from project with original worksheet row indices
             x_data, y_data, y_err_data, valid_indices = self._get_curve_data_with_indices(curve)
@@ -324,7 +328,7 @@ class PlotManager:
                 )
 
             g_pos = group_positions.get(curve.id)
-            PlotRenderer.render_curve(target_ax, curve, x_plot, y_plot, y_err_data, group_pos=g_pos)
+            PlotRenderer.render_curve(target_ax, render_curve, x_plot, y_plot, y_err_data, group_pos=g_pos)
             # Store RenderedCurve (3-tuple unpackable, with row_indices and is_masked)
             self.rendered_curves.append(RenderedCurve(curve.label, x_plot, y_plot, valid_indices, False))
 
@@ -479,6 +483,21 @@ class PlotManager:
                         self.ax.legend(handles, labels, loc="best", fontsize=10)
                     except Exception:
                         pass
+
+        legend=self.ax.get_legend()
+        if legend is not None:
+            from matplotlib.colors import is_color_like
+            theme=THEMES.get(self.model.theme,THEMES["Origin Classic"])
+            def legend_color(attribute,default):
+                value=getattr(self.model,attribute,"auto")
+                return value if value not in (None,"auto","") and is_color_like(value) else default
+            text_color=legend_color("legend_text_color",theme.get("axes.labelcolor","#202b40"))
+            for text in legend.get_texts():
+                text.set_color(text_color)
+            frame=legend.get_frame()
+            frame.set_facecolor(legend_color("legend_face_color",theme.get("legend.facecolor",theme["axes.facecolor"])))
+            frame.set_edgecolor(legend_color("legend_edge_color",theme.get("legend.edgecolor",theme["axes.edgecolor"])))
+            frame.set_alpha(max(0.0,min(1.0,float(getattr(self.model,"legend_frame_alpha",0.9)))))
 
         try:
             self.fig.tight_layout(pad=1.2)

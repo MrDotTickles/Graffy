@@ -200,10 +200,9 @@ def test_graph_view_label_bar_compact_grid(qapp):
     gm = proj.graphs[0]
     gv = GraphViewWidget(gm, proj)
 
-    # 1. Layout must be QGridLayout
-    layout = gv.label_bar.layout()
-    assert isinstance(layout, QGridLayout), f"label_bar layout must be QGridLayout, got {type(layout)}"
-    assert layout.rowCount() == 2, f"label_bar grid must have 2 rows, got {layout.rowCount()}"
+    # The responsive editor exposes labels and style as separate sections.
+    assert gv.editor_tabs.tabText(0) == "Labels"
+    assert gv.editor_tabs.tabText(1) == "Style"
 
     # 2. Text fields and labels must exist as public attributes
     assert hasattr(gv, "txt_quick_title") and isinstance(gv.txt_quick_title, QLineEdit)

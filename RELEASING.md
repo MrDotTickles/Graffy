@@ -1,7 +1,7 @@
 # Publish Graffy from this folder
 
 This folder already tracks `https://github.com/MrDotTickles/Graffy.git` on `main`.
-The repository already has `v1.0.0`; use **1.0.1 or higher** for the next release.
+The current source version is `1.0.1`; choose an unused higher version for the next release (for example **1.0.2**). The release helper also checks existing Git tags.
 No new release has been published by this setup.
 
 ## 1. Upload these changes
@@ -20,8 +20,8 @@ A normal push runs tests without publishing a new version.
 
 ## 2. Publish the app
 
-1. Double-click **Release_Graffy.bat** in this folder.
-2. Enter **1.0.1**. Later releases can be `1.0.2`, `1.1.0`, and so on.
+1. Double-click **scripts/Release_Graffy.bat** in this folder.
+2. Enter a version higher than the source version and all existing release tags, such as **1.0.2** if it is available.
 3. The helper checks Git and your author identity, updates the app's version, runs
    every test, commits that version, creates its tag, and pushes the branch and tag together.
 4. Open [GitHub Actions](https://github.com/MrDotTickles/Graffy/actions).
@@ -66,7 +66,7 @@ configured. DMGs alone do not satisfy Gatekeeper. See [launch readiness](docs/LA
 
 ## Future updates
 
-Make changes → commit with GitHub Desktop → double-click `Release_Graffy.bat` →
+Make changes → commit with GitHub Desktop → double-click `scripts/Release_Graffy.bat` →
 enter a higher version → wait for Actions. The helper pushes the committed changes
 with the release tag. Startup and six-hour checks notify users of the published version.
 Users who disabled checks keep that choice. Users on an older app without update
@@ -76,7 +76,7 @@ notices need to download this new build once.
 
 From this folder on Windows:
 
-Double-click `Setup_Graffy.bat` to restore the local development libraries after
+Double-click `scripts/Setup_Graffy.bat` to restore the local development libraries after
 cleanup. The launch and release buttons also do this automatically when `.venv`
 is missing. This needs Python 3.13 and an internet connection. The large `.venv`,
 `build`, and `dist` folders are generated locally and never uploaded to GitHub.
@@ -86,7 +86,7 @@ py -3.13 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements-build.txt
 .\.venv\Scripts\python.exe main.py
 .\.venv\Scripts\python.exe -m pytest tests/ -q
-.\.venv\Scripts\python.exe scripts/release.py 1.0.1
+.\.venv\Scripts\python.exe scripts/release.py 1.0.2
 ```
 
 On macOS, use `python3 -m venv .venv`, then `.venv/bin/python` for the commands.
@@ -96,7 +96,7 @@ Core release dependency versions are pinned in `constraints-release.txt`; update
 those deliberately and validate every platform. Transitive dependencies still
 resolve from the package index. Installed versions appear in the workflow logs.
 
-Source launch buttons stay at the root. Supporting tools are in `scripts/`,
+The ordinary-user start button and START HERE guide stay at the root. Developer source launch buttons are under scripts/. Supporting tools are in `scripts/`,
 installer configuration is in `packaging/`, icons are in
 `omnigraph/ui/styles/icons/`, and generated packages are in ignored `dist/`.
 `docs/examples/version.json` is a legacy server-manifest example; the app uses

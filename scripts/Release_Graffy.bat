@@ -1,6 +1,6 @@
 @echo off
 setlocal
-cd /d "%~dp0"
+cd /d "%~dp0.."
 echo Graffy release helper - commit your code changes before continuing.
 set /p "GRAFFY_VERSION=New version (example 1.0.1): "
 if not defined GRAFFY_VERSION exit /b 1

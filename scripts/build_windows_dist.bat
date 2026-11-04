@@ -9,7 +9,7 @@ echo.
 
 :: 1. Check Python
 if not exist ".venv\Scripts\python.exe" (
-    call "%~dp0..\Setup_Graffy.bat"
+    call "%~dp0Setup_Graffy.bat"
     if errorlevel 1 exit /b 1
 )
 set "GRAFFY_PYTHON=.venv\Scripts\python.exe"

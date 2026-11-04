@@ -1,6 +1,6 @@
 @echo off
 setlocal
-cd /d "%~dp0"
+cd /d "%~dp0.."
 echo Setting up Graffy's local development environment.
 echo This downloads the Python libraries used to run, test, and build Graffy.
 echo The .venv folder will take several hundred megabytes and stays out of Git.

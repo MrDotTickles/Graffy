@@ -338,9 +338,24 @@ class PropertyInspectorWidget(QWidget):
         fs_layout.addWidget(self.spn_legend_fs)
         layout.addLayout(fs_layout)
 
+        edit_colors=QPushButton("Series and legend colors…")
+        edit_colors.clicked.connect(self._open_complete_legend_editor)
+        layout.addWidget(edit_colors)
         layout.addStretch()
         scroll.setWidget(w)
         return scroll
+
+    def _open_complete_legend_editor(self):
+        if self.active_graph is None:
+            return
+        from omnigraph.ui.dialogs.legend_dialog import LegendEditorDialog
+        parent_window=self.window()
+        def apply():
+            self.graph_property_changed.emit()
+            self.set_active_graph(self.active_graph)
+        dialog=LegendEditorDialog(self.active_graph,self,on_apply_callback=apply,
+                                  project=getattr(parent_window,"project",None))
+        dialog.exec()
 
     def _create_column_tab(self) -> QWidget:
         scroll = QScrollArea()

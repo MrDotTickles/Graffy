@@ -89,7 +89,7 @@ class ExtractedPreviewModel(QAbstractTableModel):
 
 
 class AIDataExtractorDialog(QDialog):
-    """Interactive AI modal to extract data from any file and plot it."""
+    """Graph-targeted importer using the same local parser as the regular importer."""
 
     def __init__(self, project: Project, active_graph: Optional[GraphModel] = None, parent=None):
         super().__init__(parent)
@@ -99,7 +99,7 @@ class AIDataExtractorDialog(QDialog):
         self.created_worksheet: Optional[Worksheet] = None
         self.created_graph: Optional[GraphModel] = None
 
-        self.setWindowTitle("🤖 AI Data Extractor & Smart Plotter")
+        self.setWindowTitle("Import data into a graph")
         self.resize(780, 580)
         self.setMinimumSize(660, 480)
         self.setAcceptDrops(True)
@@ -108,165 +108,9 @@ class AIDataExtractorDialog(QDialog):
         self._init_ui()
 
     def _apply_theme_style(self):
-        app = QApplication.instance()
-        is_dark = getattr(app, "is_dark_theme", False) or "background-color: #181825" in (app.styleSheet() if app else "")
-        if is_dark:
-            self.setStyleSheet("""
-                QDialog {
-                    background-color: #181825;
-                }
-                QLabel {
-                    color: #cdd6f4;
-                    font-weight: 600;
-                }
-                QGroupBox {
-                    border: 1.5px solid #313244;
-                    border-radius: 6px;
-                    margin-top: 14px;
-                    padding: 12px 8px 8px 8px;
-                    background-color: #1e1e2e;
-                    font-weight: bold;
-                }
-                QGroupBox::title {
-                    subcontrol-origin: margin;
-                    subcontrol-position: top left;
-                    padding: 1px 8px;
-                    color: #89b4fa;
-                    font-weight: 700;
-                    background-color: #1e1e2e;
-                    border: 1px solid #313244;
-                    border-radius: 3px;
-                }
-                QGroupBox QLabel, QGroupBox QCheckBox {
-                    color: #cdd6f4;
-                    font-weight: 600;
-                }
-                QLineEdit, QComboBox {
-                    background-color: #181825;
-                    color: #cdd6f4;
-                    border: 1.5px solid #45475a;
-                    border-radius: 4px;
-                    padding: 5px 8px;
-                    font-weight: 500;
-                }
-                QTabWidget::pane {
-                    border: 1.5px solid #313244;
-                    background-color: #1e1e2e;
-                    border-radius: 4px;
-                }
-                QTabBar::tab {
-                    background-color: #181825;
-                    color: #cdd6f4;
-                    font-weight: 700;
-                    font-size: 11px;
-                    padding: 6px 14px;
-                    margin-right: 2px;
-                    border-top-left-radius: 4px;
-                    border-top-right-radius: 4px;
-                    border: 1px solid #313244;
-                }
-                QTabBar::tab:selected {
-                    background-color: #1e1e2e;
-                    color: #89b4fa;
-                    border-bottom: 2px solid #89b4fa;
-                }
-                QTableView {
-                    background-color: #181825;
-                    alternate-background-color: #1e1e2e;
-                    gridline-color: #313244;
-                    color: #cdd6f4;
-                    border: 1.5px solid #313244;
-                    border-radius: 4px;
-                    selection-background-color: #45475a;
-                    selection-color: #89b4fa;
-                }
-                QHeaderView::section {
-                    background-color: #1e1e2e;
-                    color: #cdd6f4;
-                    font-weight: 700;
-                    padding: 4px 6px;
-                    border: 1px solid #313244;
-                }
-            """)
-        else:
-            self.setStyleSheet("""
-                QDialog {
-                    background-color: #f8fafc;
-                }
-                QLabel {
-                    color: #0f172a;
-                    font-weight: 600;
-                }
-                QGroupBox {
-                    border: 1.5px solid #cbd5e1;
-                    border-radius: 6px;
-                    margin-top: 14px;
-                    padding: 12px 8px 8px 8px;
-                    background-color: #ffffff;
-                    font-weight: bold;
-                }
-                QGroupBox::title {
-                    subcontrol-origin: margin;
-                    subcontrol-position: top left;
-                    padding: 1px 8px;
-                    color: #0369a1;
-                    font-weight: 700;
-                    background-color: #ffffff;
-                    border: 1px solid #cbd5e1;
-                    border-radius: 3px;
-                }
-                QGroupBox QLabel, QGroupBox QCheckBox {
-                    color: #0f172a;
-                    font-weight: 600;
-                }
-                QLineEdit, QComboBox {
-                    background-color: #ffffff;
-                    color: #0f172a;
-                    border: 1.5px solid #94a3b8;
-                    border-radius: 4px;
-                    padding: 5px 8px;
-                    font-weight: 500;
-                }
-                QTabWidget::pane {
-                    border: 1.5px solid #cbd5e1;
-                    background-color: #ffffff;
-                    border-radius: 4px;
-                }
-                QTabBar::tab {
-                    background-color: #e2e8f0;
-                    color: #0f172a;
-                    font-weight: 700;
-                    font-size: 11px;
-                    padding: 6px 14px;
-                    margin-right: 2px;
-                    border-top-left-radius: 4px;
-                    border-top-right-radius: 4px;
-                    border: 1px solid #cbd5e1;
-                }
-                QTabBar::tab:selected {
-                    background-color: #ffffff;
-                    color: #0369a1;
-                    border-bottom: 2px solid #0284c7;
-                }
-                QTableView {
-                    background-color: #ffffff;
-                    alternate-background-color: #f8fafc;
-                    gridline-color: #cbd5e1;
-                    color: #0f172a;
-                    border: 1.5px solid #cbd5e1;
-                    border-radius: 4px;
-                    selection-background-color: #0284c7;
-                    selection-color: #ffffff;
-                }
-                QHeaderView::section {
-                    background-color: #f1f5f9;
-                    color: #0f172a;
-                    font-weight: 700;
-                    padding: 4px 6px;
-                    border: 1px solid #cbd5e1;
-                }
-            """)
-        if hasattr(self, "preview_model") and self.preview_model is not None:
+        # Use the same application palette and control styles as every other dialog.
+        self.setStyleSheet("")
+        if hasattr(self,"preview_model") and self.preview_model is not None:
             self.preview_model.layoutChanged.emit()
 
     def dragEnterEvent(self, event):
@@ -297,13 +141,13 @@ class AIDataExtractorDialog(QDialog):
         is_dark = getattr(app, "is_dark_theme", False) or "background-color: #181825" in (app.styleSheet() if app else "")
 
         # Header Banner
-        lbl_banner = QLabel("<b>AI Smart File Ingestion & Auto-Plot</b>")
-        lbl_banner.setStyleSheet(f"font-weight: 700; color: {'#38bdf8' if is_dark else '#0369a1'};")
+        lbl_banner = QLabel("<b>Import and choose a graph</b>")
+        lbl_banner.setProperty("role","heading")
         main_layout.addWidget(lbl_banner)
 
         lbl_desc = QLabel(
-            "Select ANY raw file (TXT, CSV, DAT, LOG, XRD .X01, Excel, JSON) or paste messy text. "
-            "AI automatically removes metadata preambles, extracts tables, assigns X/Y roles, and generates your graph!"
+            "Choose a data file (TXT, CSV, DAT, LOG, XRD .X01, Excel, JSON) or paste messy text. "
+            "Automatic detection reads headers, units, and numeric tables locally. Preview the result, then choose a new or existing graph."
         )
         lbl_desc.setWordWrap(True)
         lbl_desc.setStyleSheet(f"color: {'#cdd6f4' if is_dark else '#0f172a'}; font-weight: 500;")
@@ -327,7 +171,7 @@ class AIDataExtractorDialog(QDialog):
             if is_dark else
             "font-weight: 600; color: #0f172a; background-color: #f1f5f9; border: 1.5px solid #94a3b8; padding: 5px 12px; border-radius: 4px;"
         )
-        btn_browse.setStyleSheet(btn_style_browse)
+        btn_browse.setStyleSheet("")
         btn_browse.clicked.connect(self._browse_file)
         f_row.addWidget(btn_browse)
         l_file.addLayout(f_row)
@@ -346,17 +190,17 @@ class AIDataExtractorDialog(QDialog):
         )
 
         btn_sample_xrd = QPushButton("XRD Rocking (.x01)")
-        btn_sample_xrd.setStyleSheet(sample_btn_style)
+        btn_sample_xrd.setStyleSheet("")
         btn_sample_xrd.clicked.connect(self._load_sample_xrd)
         samples_row.addWidget(btn_sample_xrd)
 
         btn_sample_hplc = QPushButton("HPLC Log (.log)")
-        btn_sample_hplc.setStyleSheet(sample_btn_style)
+        btn_sample_hplc.setStyleSheet("")
         btn_sample_hplc.clicked.connect(self._load_sample_hplc)
         samples_row.addWidget(btn_sample_hplc)
 
         btn_sample_spec = QPushButton("Spectrometer (.txt)")
-        btn_sample_spec.setStyleSheet(sample_btn_style)
+        btn_sample_spec.setStyleSheet("")
         btn_sample_spec.clicked.connect(self._load_sample_spec)
         samples_row.addWidget(btn_sample_spec)
         samples_row.addStretch()
@@ -409,8 +253,8 @@ class AIDataExtractorDialog(QDialog):
         l_settings.addWidget(self.combo_delim, 0, 3)
 
         # Action button to trigger extraction (spans row 1)
-        btn_extract = QPushButton("⚡ Auto-Extract Data with AI")
-        btn_extract.setStyleSheet("font-weight: 700; background-color: #0284c7; color: #ffffff; padding: 6px 14px; border-radius: 4px;")
+        btn_extract = QPushButton("Preview data")
+        btn_extract.setStyleSheet("")
         btn_extract.clicked.connect(self._run_extraction)
         l_settings.addWidget(btn_extract, 1, 0, 1, 4)
 
@@ -433,7 +277,7 @@ class AIDataExtractorDialog(QDialog):
         splitter.addWidget(grp_raw)
 
         # Right: Extracted Table Preview
-        grp_extracted = QGroupBox("AI Extracted Table Preview")
+        grp_extracted = QGroupBox("Data preview")
         l_ext = QVBoxLayout(grp_extracted)
         self.table_preview = QTableView()
         self.preview_model = ExtractedPreviewModel()
@@ -481,21 +325,30 @@ class AIDataExtractorDialog(QDialog):
         btn_layout.addStretch()
 
         btn_cancel = QPushButton("Cancel")
-        btn_cancel.setStyleSheet(
-            "font-weight: 600; color: #cdd6f4; background-color: #313244; border: 1.5px solid #45475a; padding: 6px 14px; border-radius: 4px;"
-            if is_dark else
-            "font-weight: 600; color: #0f172a; background-color: #f1f5f9; border: 1.5px solid #94a3b8; padding: 6px 14px; border-radius: 4px;"
-        )
+        btn_cancel.setStyleSheet("")
         btn_cancel.clicked.connect(self.reject)
         btn_layout.addWidget(btn_cancel)
 
-        self.btn_import_plot = QPushButton("📈 Import && Plot Now!")
+        self.btn_import_plot = QPushButton("Import and plot")
+        self.btn_import_plot.setDefault(True)
+        self.btn_import_plot.setProperty("role","primary")
         self.btn_import_plot.setEnabled(False)
-        self.btn_import_plot.setStyleSheet("font-weight: 700; background-color: #15803d; color: #ffffff; padding: 7px 18px; border-radius: 4px;")
+        self.btn_import_plot.setStyleSheet("")
         self.btn_import_plot.clicked.connect(self._on_import_and_plot)
         btn_layout.addWidget(self.btn_import_plot)
 
         main_layout.addLayout(btn_layout)
+        from omnigraph.ui.dialogs.dialog_layout import fold_section, finish_dialog
+        self.reading_toggle, self.reading_options = fold_section(grp_settings, "Adjust reading options")
+        l_settings.removeWidget(btn_extract)
+        main_layout.insertWidget(main_layout.indexOf(grp_settings), btn_extract)
+        self.raw_toggle = QCheckBox("Show source text")
+        self.raw_options = grp_raw
+        grp_raw.hide()
+        self.raw_toggle.toggled.connect(grp_raw.setVisible)
+        main_layout.insertWidget(main_layout.indexOf(splitter), self.raw_toggle)
+        self.lbl_extract_summary.setWordWrap(True)
+        finish_dialog(self)
 
     def _browse_file(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -712,7 +565,7 @@ class AIDataExtractorDialog(QDialog):
         wb = self.project.workbooks[0]
 
         # Determine worksheet name
-        base_name = "AI_Extracted"
+        base_name = "ImportedData"
         counter = 1
         sheet_name = base_name
         existing_names = [s.name for s in wb.sheets]
@@ -753,7 +606,7 @@ class AIDataExtractorDialog(QDialog):
             if "Layer onto Active" in target_mode and self.active_graph:
                 graph = self.active_graph
             else:
-                graph_title = f"AI_Plot_{len(self.project.graphs) + 1}"
+                graph_title = f"Imported graph {len(self.project.graphs) + 1}"
                 graph = GraphModel(title=graph_title, plot_type=plot_type)
                 xcol = ws.get_column(x_col_idx)
                 if xcol:
@@ -761,7 +614,7 @@ class AIDataExtractorDialog(QDialog):
                 if y_col_indices and ws.get_column(y_col_indices[0]):
                     ycol = ws.get_column(y_col_indices[0])
                     graph.y_title = ycol.display_label
-                graph.title_text = f"AI Extracted: {sheet_name}"
+                graph.title_text = f"Imported data: {sheet_name}"
                 self.project.graphs.append(graph)
 
             # Add curve for each Y column

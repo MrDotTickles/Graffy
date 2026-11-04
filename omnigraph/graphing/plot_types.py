@@ -36,7 +36,7 @@ class PlotRenderer:
         mew = curve_model.marker_edge_width
 
         if pt == "scatter":
-            m = marker if marker else "o"
+            m = marker
             fc = mfc if mfc != "none" else "none"
             ec = mec if mec != "none" else color
             artist = ax.scatter(
@@ -54,7 +54,7 @@ class PlotRenderer:
             return artist
 
         elif pt == "line":
-            style = ls if ls != "none" else "-"
+            style = ls
             artist = ax.plot(
                 x,
                 y,
@@ -68,8 +68,8 @@ class PlotRenderer:
             return artist[0]
 
         elif pt == "line_symbol":
-            style = ls if ls != "none" else "-"
-            m = marker if marker else "o"
+            style = ls
+            m = marker
             fc = mfc if mfc != "none" else "none"
             ec = mec if mec != "none" else color
             artist = ax.plot(
@@ -94,6 +94,7 @@ class PlotRenderer:
                 x,
                 y,
                 where="mid",
+                linestyle=ls,
                 linewidth=lw,
                 color=color,
                 alpha=alpha,
@@ -117,7 +118,7 @@ class PlotRenderer:
                     artist = ax.plot(
                         x_dense,
                         y_dense,
-                        linestyle=ls if ls != "none" else "-",
+                        linestyle=ls,
                         linewidth=lw,
                         color=color,
                         alpha=alpha,
@@ -129,7 +130,7 @@ class PlotRenderer:
                         ax.scatter(x, y, s=(ms**2), marker=marker, facecolors=mfc, edgecolors=mec, alpha=alpha, zorder=4)
                     return artist[0]
             # Fallback to line
-            artist = ax.plot(x, y, linestyle="-", linewidth=lw, color=color, alpha=alpha, label=label)
+            artist = ax.plot(x, y, linestyle=ls, linewidth=lw, color=color, alpha=alpha, label=label)
             return artist[0]
 
         elif pt == "bar":
@@ -154,15 +155,15 @@ class PlotRenderer:
             return artist
 
         elif pt == "hbar":
-            y_arr = np.asarray(y, dtype=float)
-            y_valid = y_arr[np.isfinite(y_arr)] if len(y_arr) > 0 else y_arr
-            diffs = np.diff(np.sort(y_valid)) if len(y_valid) > 1 else np.array([])
+            x_arr = np.asarray(x, dtype=float)
+            x_valid = x_arr[np.isfinite(x_arr)] if len(x_arr) > 0 else x_arr
+            diffs = np.diff(np.sort(x_valid)) if len(x_valid) > 1 else np.array([])
             pos_diffs = diffs[diffs > 1e-12]
             dy = float(np.min(pos_diffs)) if len(pos_diffs) > 0 else 1.0
             height = dy * 0.75 if dy > 0 else 0.75
             artist = ax.barh(
-                y,
                 x,
+                y,
                 height=height,
                 color=color,
                 edgecolor=mec if mec != "none" else "#000000",
@@ -183,16 +184,16 @@ class PlotRenderer:
                 label=label,
                 zorder=2,
             )
-            ax.plot(x, y, color=color, linewidth=lw, alpha=alpha, zorder=3)
+            ax.plot(x, y, color=color, linewidth=lw, linestyle=ls, alpha=alpha, zorder=3)
             return artist
 
-        elif pt == "errorbar" or (y_err is not None and len(y_err) == len(y)):
+        elif pt == "errorbar":
             err = y_err if y_err is not None else np.zeros_like(y)
             artist = ax.errorbar(
                 x,
                 y,
                 yerr=err,
-                fmt=marker if marker else "o",
+                fmt=marker if marker else "none",
                 color=color,
                 ecolor=color,
                 elinewidth=lw,

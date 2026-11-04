@@ -188,7 +188,7 @@ def test_bar_and_hbar_duplicate_coordinates():
     cm_hbar = CurveModel(plot_type="hbar")
     y_h = np.array([1.0, 2.0, 2.0, 3.0])
     x_h = np.array([10.0, 20.0, 25.0, 30.0])
-    artist_hbar = PlotRenderer.render_curve(ax, cm_hbar, x_h, y_h)
+    artist_hbar = PlotRenderer.render_curve(ax, cm_hbar, y_h, x_h)
     assert len(artist_hbar.patches) == 4
     for patch in artist_hbar.patches:
         assert patch.get_height() > 0.0
@@ -198,7 +198,7 @@ def test_bar_and_hbar_duplicate_coordinates():
     ax.cla()
     y_h_dup = np.array([4.0, 4.0])
     x_h_dup = np.array([1.0, 2.0])
-    artist_hbar2 = PlotRenderer.render_curve(ax, cm_hbar, x_h_dup, y_h_dup)
+    artist_hbar2 = PlotRenderer.render_curve(ax, cm_hbar, y_h_dup, x_h_dup)
     assert len(artist_hbar2.patches) == 2
     for patch in artist_hbar2.patches:
         assert patch.get_height() == pytest.approx(0.75)

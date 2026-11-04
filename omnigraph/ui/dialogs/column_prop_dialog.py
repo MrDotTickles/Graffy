@@ -34,7 +34,7 @@ class ColumnPropertiesDialog(QDialog):
         self.txt_long_name = self.txt_name
 
         self.lbl_id = QLabel(f"Col {self.column.name}")
-        self.lbl_id.setStyleSheet("color: #64748b; font-style: italic;")
+        self.lbl_id.setProperty("role","muted")
         form.addRow("Identifier:", self.lbl_id)
 
         self.txt_units = QLineEdit(self.column.units)
@@ -56,6 +56,10 @@ class ColumnPropertiesDialog(QDialog):
         buttons.accepted.connect(self._on_accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Save column")
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setProperty("role","primary")
+        from omnigraph.ui.dialogs.dialog_layout import finish_dialog
+        finish_dialog(self,scroll_body=True)
 
     def _on_accept(self):
         val = self.txt_name.text().strip()

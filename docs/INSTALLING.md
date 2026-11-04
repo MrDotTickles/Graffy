@@ -1,5 +1,7 @@
 # Install and update Graffy
 
+Start at the [Graffy download website](https://graffy-scientific-graphing.recentdream1.chatgpt.site). Choose Windows or Mac and follow the three installation steps shown there.
+
 Download only from [Graffy's official releases](https://github.com/MrDotTickles/Graffy/releases/latest).
 You do not need Python, Git, a command prompt, or a GitHub account.
 The links below work after a packaged release has been published.
@@ -12,7 +14,7 @@ The links below work after a packaged release has been published.
 
 The app installs for your Windows account without an administrator password.
 This package targets 64-bit Windows; there is no 32-bit installer.
-The measured build downloads about 71.2 MB and installs about 241.4 MB of app files.
+The measured build downloads about 71.1 MB and installs about 241.1 MB of app files.
 The installer uses the standard per-user location and creates launch shortcuts.
 See [package sizes](PACKAGE_SIZE.md) for details.
 

@@ -1,11 +1,11 @@
 # Download and installed size
 
-Measured from the Windows 1.0.0 build on November 2, 2026:
+Measured from the Windows 1.0.1 redesigned desktop build on November 2, 2026:
 
 | Item | Size |
 | --- | --- |
-| Windows installer download | **71.2 MB** (67.9 MiB) |
-| Application files after installation | **241.4 MB** (230.3 MiB) |
+| Windows installer download | **71.1 MB** (67.8 MiB) |
+| Application files after installation | **241.1 MB** (229.9 MiB) |
 
 These are actual artifact measurements, not estimates from the source folder.
 Installed disk allocation and uninstall bookkeeping add a little overhead.

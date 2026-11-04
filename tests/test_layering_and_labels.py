@@ -197,9 +197,10 @@ def test_main_window_layering_and_label_integration(qapp):
     window = MainWindow(project=project)
     window.show()
 
-    # Verify window minimum sizing
-    assert window.minimumWidth() >= 800
-    assert window.minimumHeight() >= 600
+    # Minimum size must fit the available logical screen, including high DPI.
+    available=window.screen().availableGeometry()
+    assert 320 <= window.minimumWidth() <= available.width()
+    assert 240 <= window.minimumHeight() <= available.height()
 
     active_graph = window.get_active_graph()
     assert active_graph is not None

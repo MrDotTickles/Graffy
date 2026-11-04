@@ -289,6 +289,10 @@ class FormulaDialog(QDialog):
         button_bar.addWidget(self.btn_apply)
 
         main_layout.addLayout(button_bar)
+        self.btn_apply.setStyleSheet("")
+        self.btn_apply.setProperty("role","primary")
+        from omnigraph.ui.dialogs.dialog_layout import finish_dialog
+        finish_dialog(self)
 
     def _on_target_col_changed(self, index: int):
         target_idx = self.combo_target.currentData()

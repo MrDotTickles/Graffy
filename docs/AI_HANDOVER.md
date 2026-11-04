@@ -1,4 +1,25 @@
+Plot switching final validation: 459 tests passed, 200% editor check and Windows packaged scientific smoke passed. Six changed compiled modules match source. Latest installer is 71,091,092 bytes; see docs/PLOT_SWITCHING.md for checksum and behavior. No commit/push/release.
+
+Latest plot switching update: see docs/PLOT_SWITCHING.md. Shared conversion and matching-series-color helpers live in omnigraph/core/plot_editing.py. GraphModel.plot_axis_settings persists labels/scales by representation. Change plot converts measured series in place; fitted curves remain unchanged. Keep the conversion tests in test_chart_editing_polish.py. The legend retains Apply/Save; the reported color issue was an older installed copy.
+
+Final contrast/editing validation: 441 tests passed, thirteen dialogs checked at 200%, compiled scientific smoke check passed, eighteen packaged modules matched source, indicator SVGs bundled. Installer rebuilt locally (71.1 MB). Source version remains 1.0.1; publish a higher version for update notices. No commit/push/release was performed.
+
+Latest chart/contrast work: see docs/UI_POLISH.md. New reusable ColorField and SeriesEditor controls live in omnigraph/ui/. Legend color/opacity fields are persisted on GraphModel. Automatic palette rendering must not mutate saved curve colors. SVG indicators are bundled under styles/icons/. Keep tests/test_chart_editing_polish.py when modifying these paths.
+
+Final desktop-redesign validation: 429 tests passed; seven dialogs verified at 200% scaling; packaged scientific smoke check passed; fourteen compiled UI modules match source; Windows installer rebuilt (71.1 MB). Local build only; no commit, push, or GitHub release performed in this redesign.
+
+Latest desktop redesign: see docs/DESKTOP_REDESIGN.md. Tab closing is now non-destructive; deleted items must use explicit project Delete actions. The chart editor is a side panel at wide sizes and a separate scrollable window at compact sizes. Named SVG icons live in omnigraph/ui/styles/design.py and shared themes in qss.py. Keep the compact action visibility and tab identity tests when changing navigation.
+
 # Graffy — AI Pair Programming Handover & Context Document
+
+> Latest dialog refresh: 419 full-suite tests passed, plus 36 final focused layout
+> checks. Import routes share the local parser; misleading AI branding removed
+> from UI. Five task dialogs simplified. See [details](IMPORT_AND_DIALOGS.md).
+
+> Current chart redesign:compact chart toolbar, collapsible Edit chart settings,
+> readable Explore navigation, contextual Data→Chart→Export workflow, and blank
+> worksheet Import/Paste starter. Full414 tests passed and final packaged smoke
+> passed. Matching Windows installer is71.1MB; application files241.1MB.
 
 > Latest package verification: Windows installer **71.2 MB**, application files
 > **241.4 MB**. Full suite: 401 passed. Packaged fitting/project/spreadsheet and
@@ -7,7 +28,7 @@
 > environment copies were removed. See [package details](PACKAGE_SIZE.md).
 
 > Size cleanup: generated `.venv`, `build`, and `dist` folders were removed after
-> validation. `Setup_Graffy.bat` restores Windows development dependencies, and
+> validation. `scripts/Setup_Graffy.bat` restores Windows development dependencies, and
 > launch/release buttons invoke it when the environment is missing. Do not assume
 > a local compiled executable or Python environment still exists.
 
@@ -25,7 +46,7 @@
 > This folder is now a Git checkout tracking `MrDotTickles/Graffy` on `main`.
 > Existing remote tag: `v1.0.0`; no new commit/tag/release was published during setup.
 > Startup/six-hour update notices, architecture-specific Mac packages, verified
-> downloads, a Windows Inno Setup installer, and `Release_Graffy.bat` are implemented.
+> downloads, a Windows Inno Setup installer, and `scripts/Release_Graffy.bat` are implemented.
 > Shared builds use `scripts/build_app.py` to prevent DLL contamination from PATH.
 > Fixed missing `Tuple` / `Optional` imports that blocked startup on Python 3.13.
 > Validation: 397 tests passed in the full suite; the focused updater suite then
@@ -58,8 +79,8 @@
 KyleGraphingSoftware/
 ├── main.py                     # Main application entry point & sample loader
 ├── requirements.txt            # Pinned cross-platform Python dependencies
-├── Launch_Graffy.bat           # Windows 1-click launcher
-├── Launch_Graffy.command       # macOS Finder double-clickable launcher
+├── scripts/Launch_Graffy.bat           # Windows 1-click launcher
+├── scripts/Launch_Graffy.command       # macOS Finder double-clickable launcher
 ├── build_windows_dist.bat      # 1-click PyInstaller Windows compiler & ZIP packager
 ├── build_mac_app.sh            # 1-click PyInstaller macOS standalone .app builder
 ├── Create_Desktop_Shortcut.bat # Windows desktop shortcut creator with custom icon
@@ -125,7 +146,7 @@ KyleGraphingSoftware/
    - Mac keyboard adaptation: `Shift+Backspace` (MacBook delete) deletes columns.
    - macOS Native Menus: `About` and `Quit` configured with `QAction.MenuRole`.
    - Native Apple San Francisco / SF Mono typography in QSS stylesheets.
-   - Double-clickable `Launch_Graffy.command` for Mac, `Launch_Graffy.bat` for Windows.
+   - Double-clickable `scripts/Launch_Graffy.command` for Mac, `scripts/Launch_Graffy.bat` for Windows.
 
 5. **GitHub-Powered In-App Auto-Updater**:
    - Configured out-of-the-box for `MrDotTickles/Graffy`.

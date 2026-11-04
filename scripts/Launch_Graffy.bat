@@ -1,5 +1,5 @@
 @echo off
-cd /d "%~dp0"
+cd /d "%~dp0.."
 title Graffy - Intuitive Scientific Graphing
 echo Starting Graffy...
 if not exist ".venv\Scripts\python.exe" (

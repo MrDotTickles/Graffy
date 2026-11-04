@@ -22,6 +22,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import QAction, QKeySequence, QColor, QBrush, QFont, QUndoStack
 
+from omnigraph.ui.styles.design import icon
 from omnigraph.core.worksheet import Worksheet, Column, ColumnRole
 from omnigraph.core.undo_manager import (
     CellEditCommand, FormulaCommand, FillColumnCommand,
@@ -376,7 +377,8 @@ class SpreadsheetWidget(QWidget):
         self.table_view.setModel(self.model)
         self.table_view.setAlternatingRowColors(True)
         self.table_view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.table_view.horizontalHeader().setDefaultSectionSize(110)
+        self.table_view.horizontalHeader().setDefaultSectionSize(145)
+        self.table_view.verticalHeader().setDefaultSectionSize(29)
         self.table_view.horizontalHeader().setMinimumSectionSize(60)
         self.table_view.horizontalHeader().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table_view.horizontalHeader().customContextMenuRequested.connect(self._on_header_context_menu)
@@ -392,6 +394,62 @@ class SpreadsheetWidget(QWidget):
         self.shortcut_mask.activated.connect(self.mask_selection)
 
         layout.addWidget(self.table_view)
+
+    def enable_guided_sheet(self):
+        """Keep the data table readable and expose editing tools on demand."""
+        if hasattr(self, "starter_panel"):
+            return
+        from PyQt6.QtWidgets import QFrame, QPushButton
+        self.toolbar.hide()
+        header = QWidget()
+        header.setObjectName("SheetHeader")
+        row = QHBoxLayout(header)
+        row.setContentsMargins(12,10,12,10)
+        heading = QLabel(self.worksheet.name)
+        heading.setProperty("role","heading")
+        row.addWidget(heading)
+        self.sheet_summary = QLabel()
+        self.sheet_summary.setProperty("role","muted")
+        row.addWidget(self.sheet_summary)
+        row.addStretch()
+        self.sheet_tools_toggle = QPushButton("Column tools")
+        self.sheet_tools_toggle.setIcon(icon("edit"))
+        self.sheet_tools_toggle.setCheckable(True)
+        self.sheet_tools_toggle.toggled.connect(self.toolbar.setVisible)
+        row.addWidget(self.sheet_tools_toggle)
+        self.layout().insertWidget(0,header)
+        self.starter_panel = QFrame()
+        self.starter_panel.setObjectName("WorksheetStarterPanel")
+        content = QVBoxLayout(self.starter_panel)
+        content.setContentsMargins(24,22,24,22)
+        content.setSpacing(12)
+        heading = QLabel("Bring your data into focus")
+        heading.setProperty("role","heading")
+        content.addWidget(heading)
+        hint = QLabel("Import a file or paste cells from Excel. You can also type directly into the table below.")
+        hint.setProperty("role","muted")
+        hint.setWordWrap(True)
+        content.addWidget(hint)
+        buttons = QHBoxLayout()
+        import_button = QPushButton("Import data…")
+        import_button.setIcon(icon("import","#ffffff"))
+        import_button.setProperty("role","primary")
+        import_button.clicked.connect(lambda: self.window().import_data() if hasattr(self.window(),"import_data") else None)
+        paste_button = QPushButton("Paste cells")
+        paste_button.clicked.connect(self.paste_selection)
+        buttons.addWidget(import_button)
+        buttons.addWidget(paste_button)
+        buttons.addStretch()
+        content.addLayout(buttons)
+        self.layout().insertWidget(1,self.starter_panel)
+        self.data_modified.connect(self._refresh_starter_panel)
+        self._refresh_starter_panel()
+
+    def _refresh_starter_panel(self):
+        if hasattr(self,"starter_panel"):
+            has_data = any(any(v is not None and str(v).strip() for v in c.data) for c in self.worksheet.columns)
+            self.starter_panel.setVisible(not has_data)
+            self.sheet_summary.setText(f"{self.worksheet.row_count():,} rows · {self.worksheet.column_count()} columns")
 
     def _on_can_undo_changed(self, can_undo: bool):
         self.btn_undo.setEnabled(can_undo)

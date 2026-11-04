@@ -174,8 +174,9 @@ def test_peak_analysis_dialog_geometry_and_scroll_scaling(qapp):
     # 1. Size checks: generously sized by default
     assert dlg.size().width() >= 650
     assert dlg.size().height() >= 550
-    assert dlg.minimumSize().width() >= 500
-    assert dlg.minimumSize().height() >= 400
+    available=dlg.screen().availableGeometry()
+    assert 280 <= dlg.minimumSize().width() <= available.width()
+    assert 240 <= dlg.minimumSize().height() <= available.height()
 
     # 2. Verify QScrollArea is present
     scrolls = dlg.findChildren(QScrollArea)

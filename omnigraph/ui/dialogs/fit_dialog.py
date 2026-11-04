@@ -1,5 +1,5 @@
 """
-Interactive Curve Fitting Wizard dialog.
+Interactive Fit a curve dialog.
 Linear, Polynomial, and Non-linear fitting with parameter constraints,
 ROI range selection, live preview, graph overlay, and report generation.
 """
@@ -36,7 +36,7 @@ class FitDialog(QDialog):
         self.roi_range = roi_range
         self.last_fit_result: Optional[FitResult] = None
 
-        self.setWindowTitle("Curve Fitting Wizard")
+        self.setWindowTitle("Fit a curve")
         self.resize(650, 580)
         self.setMinimumSize(540, 480)
         self._init_ui(initial_fit_type)
@@ -158,7 +158,7 @@ class FitDialog(QDialog):
         self.txt_preview = QTextBrowser()
         self.txt_preview.setMinimumHeight(70)
         self.txt_preview.setMaximumHeight(110)
-        self.txt_preview.setHtml("<i>Click 'Calculate Fit' to evaluate and preview results.</i>")
+        self.txt_preview.setHtml("<i>Click 'Preview fit' to evaluate and preview results.</i>")
         content_layout.addWidget(self.txt_preview)
 
         scroll.setWidget(content_widget)
@@ -166,7 +166,7 @@ class FitDialog(QDialog):
 
         # Buttons (pinned at bottom outside scroll area)
         btn_layout = QHBoxLayout()
-        btn_calc = QPushButton("⚡ Calculate Fit")
+        btn_calc = QPushButton("Preview fit")
         btn_calc.clicked.connect(self._run_fit_calculation)
         btn_layout.addWidget(btn_calc)
 
@@ -175,12 +175,20 @@ class FitDialog(QDialog):
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         self.buttons.accepted.connect(self._on_accept)
         self.buttons.rejected.connect(self.reject)
-        self.buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Apply & Finish")
+        self.buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Add fit")
+        self.buttons.button(QDialogButtonBox.StandardButton.Ok).setDefault(True)
+        self.buttons.button(QDialogButtonBox.StandardButton.Ok).setProperty("role","primary")
         btn_layout.addWidget(self.buttons)
 
         layout.addLayout(btn_layout, stretch=0)
 
         self._populate_columns()
+        from omnigraph.ui.dialogs.dialog_layout import fold_section, finish_dialog
+        self.output_toggle, self.output_options = fold_section(grp_out, "Change fit outputs")
+        summary = QLabel("Preview the fit, then add it to your project. The default adds the fitted curve, a report, and a results worksheet.")
+        summary.setWordWrap(True)
+        layout.insertWidget(0, summary)
+        finish_dialog(self, scroll_body=False)
 
     def _on_sheet_changed(self):
         self._populate_columns()

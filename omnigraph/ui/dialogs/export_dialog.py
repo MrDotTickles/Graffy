@@ -35,7 +35,7 @@ class ExportDialog(QDialog):
     def __init__(self, plot_manager: PlotManager, parent=None):
         super().__init__(parent)
         self.plot_manager = plot_manager
-        self.setWindowTitle("Export High-Resolution Figure")
+        self.setWindowTitle("Save or copy graph")
         self.resize(760, 560)
         self.setMinimumSize(660, 480)
 
@@ -59,9 +59,9 @@ class ExportDialog(QDialog):
         sub_color = "#a6adc8" if is_dark else "#475569"
         border_color = "#313244" if is_dark else "#e2e8f0"
         header = QLabel(
-            f"<h3 style='margin:0; color:#0284c7;'>Export Publication-Quality Figure</h3>"
-            f"<span style='color:{sub_color};'>Configure exact journal dimensions, resolution, and format. "
-            "Guarantees clean proportions without canvas stretching.</span>"
+            f"<h3 style='margin:0; color:#4f46e5;'>Save your graph</h3>"
+            f"<span style='color:{sub_color};'>Choose an image format and where to save it. "
+            "Use PNG for images, or PDF and SVG for scalable figures.</span>"
         )
         header.setWordWrap(True)
         header.setStyleSheet(f"padding-bottom: 4px; border-bottom: 1px solid {border_color};")
@@ -192,6 +192,9 @@ class ExportDialog(QDialog):
         self.chk_transparent = QCheckBox("Transparent Background")
         fmt_form.addRow(self.chk_transparent)
 
+        fmt_form.setRowVisible(self.spn_custom_dpi, False)
+        self.combo_dpi.currentIndexChanged.connect(lambda: fmt_form.setRowVisible(self.spn_custom_dpi, self.combo_dpi.currentData() == -1))
+        grp_fmt.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         left_panel.addWidget(grp_fmt)
         content_layout.addLayout(left_panel, stretch=3)
 
@@ -219,6 +222,9 @@ class ExportDialog(QDialog):
         btn_refresh_prev.clicked.connect(self._update_preview)
         prev_layout.addWidget(btn_refresh_prev)
 
+        self.lbl_preview_img.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
+        self.lbl_preview_img.setMaximumHeight(220)
+        grp_preview.setMaximumHeight(300)
         right_panel.addWidget(grp_preview)
         content_layout.addLayout(right_panel, stretch=2)
 
@@ -229,28 +235,27 @@ class ExportDialog(QDialog):
         path_layout = QHBoxLayout(path_group)
         self.txt_path = QLineEdit()
         # Clean default name based on model title
-        clean_title = (self.plot_manager.model.title or "Graph").replace(" ", "_").replace("/", "_")
-        self.txt_path.setText(os.path.abspath(f"{clean_title}.png"))
+        import re
+        clean_title = re.sub(r'[<>:"/\\|?*]', "_", self.plot_manager.model.title or "Graph").strip(" .").replace(" ", "_") or "Graph"
+        from PyQt6.QtCore import QStandardPaths
+        destination = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation) or os.path.expanduser("~")
+        self.txt_path.setText(os.path.join(destination, f"{clean_title}.png"))
         path_layout.addWidget(self.txt_path)
 
         btn_browse = QPushButton("Browse...")
         btn_browse.clicked.connect(self._browse_path)
         path_layout.addWidget(btn_browse)
-        main_layout.addWidget(path_group)
+        main_layout.insertWidget(1, path_group)
 
         # --- Bottom Actions ---
         bottom_bar = QHBoxLayout()
 
-        self.btn_copy_clipboard = QPushButton("Copy to Clipboard")
+        self.btn_copy_clipboard = QPushButton("Copy image")
         self.btn_copy_clipboard.setToolTip("Copy figure directly to system clipboard at current dimensions and DPI")
         if is_dark:
-            self.btn_copy_clipboard.setStyleSheet(
-                "padding: 6px 14px; font-weight: bold; background: #313244; color: #cdd6f4; border: 1px solid #45475a; border-radius: 4px;"
-            )
+            self.btn_copy_clipboard.setStyleSheet("")
         else:
-            self.btn_copy_clipboard.setStyleSheet(
-                "padding: 6px 14px; font-weight: bold; background: #f8fafc; color: #0f172a; border: 1px solid #94a3b8; border-radius: 4px;"
-            )
+            self.btn_copy_clipboard.setStyleSheet("")
         self.btn_copy_clipboard.clicked.connect(self._on_copy_to_clipboard)
         bottom_bar.addWidget(self.btn_copy_clipboard)
 
@@ -264,15 +269,19 @@ class ExportDialog(QDialog):
         btn_cancel.clicked.connect(self.reject)
         bottom_bar.addWidget(btn_cancel)
 
-        self.btn_export = QPushButton("Export Figure")
+        self.btn_export = QPushButton("Save graph")
         self.btn_export.setDefault(True)
-        self.btn_export.setStyleSheet(
-            "padding: 6px 18px; font-weight: bold; background: #0284c7; color: white; border-radius: 4px;"
-        )
+        self.btn_export.setProperty("role","primary")
+        self.btn_export.setStyleSheet("")
         self.btn_export.clicked.connect(self._on_export)
         bottom_bar.addWidget(self.btn_export)
 
         main_layout.addLayout(bottom_bar)
+        from omnigraph.ui.dialogs.dialog_layout import fold_section, finish_dialog
+        self.sizing_toggle, self.sizing_options = fold_section(grp_dim, "Change figure size")
+        self.lbl_preview_img.setMinimumSize(120, 100)
+        self.lbl_copy_status.setWordWrap(True)
+        finish_dialog(self)
 
     def get_dpi(self) -> int:
         dpi_val = self.combo_dpi.currentData()
@@ -515,6 +524,10 @@ class ExportDialog(QDialog):
             QMessageBox.warning(self, "Path Error", "Please specify an export destination file path.")
             return
 
+        if os.path.exists(path):
+            answer = QMessageBox.question(self, "Replace existing file?", "A file with this name already exists. Replace it?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+            if answer != QMessageBox.StandardButton.Yes:
+                return
         dpi = self.get_dpi()
         transparent = self.chk_transparent.isChecked()
         tight = self.chk_tight.isChecked()

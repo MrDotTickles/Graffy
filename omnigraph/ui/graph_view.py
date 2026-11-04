@@ -8,7 +8,7 @@ import numpy as np
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QToolBar, QToolButton,
     QComboBox, QLabel, QMenu, QInputDialog, QMessageBox, QFileDialog, QToolTip,
-    QLineEdit
+    QLineEdit, QScrollArea, QSizePolicy, QSplitter, QFormLayout, QPushButton, QTabWidget, QDialog, QCheckBox
 )
 from PyQt6.QtCore import pyqtSignal, Qt, QPoint, QRect
 from PyQt6.QtGui import QAction, QIcon, QKeySequence, QShortcut
@@ -17,6 +17,8 @@ from omnigraph.core.project import GraphModel, Project, CurveModel
 from omnigraph.core.worksheet import Column, ColumnRole
 from omnigraph.graphing.canvas import OmniCanvas
 from omnigraph.graphing.themes import THEMES
+from omnigraph.core.plot_editing import PLOT_GROUPS, change_graph_plot_type
+from omnigraph.ui.styles.design import icon
 from omnigraph.analysis.statistics import StatisticsAnalyzer
 
 
@@ -63,7 +65,6 @@ class GraphViewWidget(QWidget):
         self.combo_theme.addItems(list(THEMES.keys()))
         self.combo_theme.setCurrentText(self.graph_model.theme)
         self.combo_theme.currentTextChanged.connect(self._on_theme_changed)
-        bar.addWidget(self.combo_theme)
 
         bar.addSeparator()
 
@@ -97,22 +98,17 @@ class GraphViewWidget(QWidget):
 
         # Key / Legend Button with quick menu
         btn_key = QToolButton()
-        btn_key.setText("🔑 Key ▾")
+        self.legend_menu_button = btn_key
+        btn_key.setText("Legend")
         btn_key.setToolTip("Edit Key / Legend series labels, placement, and appearance")
-        btn_key.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        key_menu = QMenu(btn_key)
-        key_menu.addAction("Edit Series Labels in Key...", self._open_legend_editor)
-        key_menu.addSeparator()
-        key_menu.addAction("Toggle Key (Show/Hide)", self._toggle_legend)
-        pos_menu = key_menu.addMenu("Position")
-        for pos in ["best", "upper right", "upper left", "lower left", "lower right", "center right", "outside right"]:
-            pos_menu.addAction(pos, lambda p=pos: self._set_legend_position(p))
-        btn_key.setMenu(key_menu)
-        bar.addWidget(btn_key)
+        btn_key.setText("Series and legend…")
+        btn_key.setToolTip("Edit series names, colors, and legend appearance")
+        btn_key.clicked.connect(self._open_legend_editor)
 
         # Add Annotation Dropdown
         btn_ann = QToolButton()
-        btn_ann.setText("+ Note ▾")
+        self.annotation_menu_button = btn_ann
+        btn_ann.setText("Add annotation")
         btn_ann.setToolTip("Add text note, reference lines, or significance brackets")
         btn_ann.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         ann_menu = QMenu(btn_ann)
@@ -122,7 +118,6 @@ class GraphViewWidget(QWidget):
         ann_menu.addAction("Add Horizontal Reference Line (y = c)...", self._add_ref_line_h)
         ann_menu.addAction("Add Vertical Reference Line (x = c)...", self._add_ref_line_v)
         btn_ann.setMenu(ann_menu)
-        bar.addWidget(btn_ann)
 
         from PyQt6.QtWidgets import QSizePolicy
         spacer = QWidget()
@@ -244,6 +239,203 @@ class GraphViewWidget(QWidget):
 
         self._sync_quick_labels()
         self._update_source_bar()
+        self._build_chart_workspace(layout, bar)
+
+    def _build_chart_workspace(self, layout, legacy_bar):
+        """A figure stage with an optional, responsive editor beside it."""
+        for widget in (legacy_bar, self.source_bar, self.label_bar, self.canvas_widget):
+            layout.removeWidget(widget)
+        legacy_bar.hide()
+        self.label_bar.hide()
+        self.canvas_widget.toolbar.hide()
+        self.chart_toolbar = QToolBar("Chart")
+        self.chart_toolbar.setObjectName("ChartWorkspaceToolbar")
+        self.chart_toolbar.setMovable(False)
+        self.chart_toolbar.setFloatable(False)
+        title = QLabel("FIGURE")
+        title.setProperty("role", "eyebrow")
+        self.chart_toolbar.addWidget(title)
+        self.chart_toolbar.addSeparator()
+        self.edit_chart_button = QToolButton()
+        self.edit_chart_button.setText("Edit chart")
+        self.edit_chart_button.setIcon(icon("edit"))
+        self.edit_chart_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.edit_chart_button.setCheckable(True)
+        self.edit_chart_button.setToolTip("Edit labels, style, legend, and annotations")
+        self.edit_chart_button.toggled.connect(self._set_chart_settings_open)
+        self.chart_toolbar.addWidget(self.edit_chart_button)
+        self.change_plot_button=QToolButton()
+        self.change_plot_button.setText("Change plot")
+        self.change_plot_button.setIcon(icon("chart"))
+        self.change_plot_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.change_plot_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.change_plot_button.setToolTip("Change the plot type on this chart using the same data. Fitted lines are kept.")
+        plot_menu=QMenu(self.change_plot_button)
+        note=plot_menu.addAction("All data series on this chart")
+        note.setEnabled(False)
+        self.change_plot_actions={}
+        for group,choices in PLOT_GROUPS:
+            submenu=plot_menu.addMenu(group)
+            for label,value in choices:
+                action=submenu.addAction(label)
+                action.setCheckable(True)
+                action.triggered.connect(lambda checked=False,kind=value:self.change_plot_type(kind))
+                self.change_plot_actions[value]=action
+        plot_menu.addSeparator()
+        plot_menu.addAction("Change just one series…",self._edit_one_series)
+        plot_menu.aboutToShow.connect(self._sync_plot_type_actions)
+        self.change_plot_button.setMenu(plot_menu)
+        self.chart_toolbar.addWidget(self.change_plot_button)
+        self.legend_action=self.chart_toolbar.addAction("Legend…",self._open_legend_editor)
+        self.legend_action.setToolTip("Change series colors, names and legend appearance")
+        self.view_data_action = self.chart_toolbar.addAction(icon("sheet"), "View data", self._view_chart_data)
+        self.view_data_action.setEnabled(any(c.source_sheet for c in self.graph_model.curves))
+        navigation = QToolButton()
+        navigation.setText("Explore")
+        navigation.setIcon(icon("zoom"))
+        navigation.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        navigation.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        menu = QMenu(navigation)
+        menu.addAction("Reset view", self.canvas_widget.toolbar.home)
+        menu.addAction("Zoom into an area", self.canvas_widget.toolbar.zoom)
+        menu.addAction("Pan the chart", self.canvas_widget.toolbar.pan)
+        menu.addSeparator()
+        menu.addAction("Read data values", lambda: self._select_tool("data_reader"))
+        menu.addAction("Select fitting range", lambda: self._select_tool("range_selector"))
+        menu.addAction("Return to pointer", lambda: self._select_tool("pointer"))
+        navigation.setMenu(menu)
+        self.chart_toolbar.addWidget(navigation)
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding,QSizePolicy.Policy.Preferred)
+        self.chart_toolbar.addWidget(spacer)
+        self.chart_toolbar.addAction(icon("copy"), "Copy graph", self._copy_to_clipboard)
+        self.chart_toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        layout.addWidget(self.chart_toolbar)
+
+        self.chart_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.chart_splitter.setChildrenCollapsible(False)
+        self.chart_splitter.addWidget(self.canvas_widget)
+        content = QWidget()
+        content.setObjectName("ChartEditorBody")
+        settings = QVBoxLayout(content)
+        settings.setContentsMargins(16,16,16,16)
+        settings.setSpacing(12)
+        heading = QLabel("Chart appearance")
+        heading.setProperty("role","heading")
+        settings.addWidget(heading)
+        hint = QLabel("Changes appear on your figure as you edit.")
+        hint.setProperty("role","muted")
+        hint.setWordWrap(True)
+        settings.addWidget(hint)
+        self.editor_tabs = QTabWidget()
+        self.editor_tabs.setDocumentMode(True)
+        settings.addWidget(self.editor_tabs)
+        labels = QWidget()
+        form = QFormLayout(labels)
+        form.setContentsMargins(0,14,0,8)
+        form.setSpacing(8)
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        for caption, field in (("Figure title",self.txt_quick_title),
+                               ("Horizontal axis (X)",self.txt_quick_x),
+                               ("Vertical axis (Y)",self.txt_quick_y)):
+            field.setMinimumWidth(0)
+            form.addRow(caption,field)
+        self.lbl_quick_y2.setText("Right vertical axis")
+        form.addRow(self.lbl_quick_y2,self.txt_quick_y2)
+        form.addRow("Panel label (optional)",self.combo_quick_panel)
+        self.lbl_quick_y_bottom=QLabel("Bottom panel vertical axis")
+        self.txt_quick_y_bottom=QLineEdit(self.graph_model.y_bottom_title)
+        self.txt_quick_y_bottom.editingFinished.connect(self._on_quick_label_edited)
+        form.addRow(self.lbl_quick_y_bottom,self.txt_quick_y_bottom)
+        self.editor_tabs.addTab(labels,"Labels")
+        style = QWidget()
+        style_layout = QVBoxLayout(style)
+        style_layout.setContentsMargins(0,14,0,8)
+        style_layout.setSpacing(10)
+        style_layout.addWidget(QLabel("Figure style"))
+        style_layout.addWidget(self.combo_theme)
+        self.show_grid_checkbox=QCheckBox("Show grid lines")
+        self.show_grid_checkbox.setChecked(self.graph_model.show_grid_major)
+        self.show_grid_checkbox.toggled.connect(self._on_grid_toggled)
+        style_layout.addWidget(self.show_grid_checkbox)
+        style_layout.addWidget(self.legend_menu_button)
+        style_layout.addWidget(self.annotation_menu_button)
+        style_layout.addStretch()
+        self.editor_tabs.addTab(style,"Style")
+        from omnigraph.ui.series_editor import SeriesEditor
+        self.series_editor=SeriesEditor(self.graph_model)
+        self.series_editor.changed.connect(self._on_series_style_changed)
+        self.editor_tabs.addTab(self.series_editor,"Series")
+        source_heading = QLabel("DATA SOURCE")
+        source_heading.setProperty("role","eyebrow")
+        settings.addWidget(source_heading)
+        settings.addWidget(self.source_bar)
+        add_series = QPushButton("Add another data series…")
+        add_series.setIcon(icon("plus"))
+        add_series.clicked.connect(self._open_add_layer_dialog)
+        settings.addWidget(add_series)
+        settings.addStretch()
+        self.chart_settings = QScrollArea()
+        self.chart_settings.setObjectName("ChartSettingsPanel")
+        self.chart_settings.setWidgetResizable(True)
+        self.chart_settings.setWidget(content)
+        self.chart_settings.setMinimumWidth(0)
+        self.chart_splitter.addWidget(self.chart_settings)
+        self.chart_splitter.setStretchFactor(0,1)
+        self.chart_splitter.setStretchFactor(1,0)
+        self.chart_settings.hide()
+        self.editor_dialog = QDialog(self)
+        self.editor_dialog.setWindowTitle("Edit chart")
+        dialog_layout = QVBoxLayout(self.editor_dialog)
+        dialog_layout.setContentsMargins(8,8,8,8)
+        self.editor_done_button = QPushButton("Done")
+        self.editor_done_button.setDefault(True)
+        self.editor_done_button.setProperty("role","primary")
+        self.editor_done_button.clicked.connect(self.editor_dialog.accept)
+        dialog_layout.addWidget(self.editor_done_button)
+        self.editor_dialog.finished.connect(lambda _: self.edit_chart_button.setChecked(False))
+        layout.addWidget(self.chart_splitter,1)
+        self._sync_quick_labels()
+
+    def _set_chart_settings_open(self, opened):
+        self.edit_chart_button.setText("Done editing" if opened else "Edit chart")
+        self._arrange_chart_editor()
+
+    def _arrange_chart_editor(self):
+        if not hasattr(self,"editor_dialog"):
+            return
+        if not self.edit_chart_button.isChecked():
+            self.chart_settings.hide()
+            self.editor_dialog.hide()
+            return
+        wide = self.width() >= 950
+        self.chart_settings.setMaximumHeight(16777215)
+        self.chart_settings.setMaximumWidth(340 if wide else 16777215)
+        if wide:
+            self.editor_dialog.hide()
+            if self.chart_settings.parentWidget() is not self.chart_splitter:
+                self.chart_splitter.addWidget(self.chart_settings)
+            self.chart_settings.show()
+            self.chart_splitter.setSizes([max(300,self.width()-320),320])
+        else:
+            # Preserve a usable figure on smaller displays. The editor becomes
+            # a separate scrollable window with its Done button always visible.
+            if self.chart_settings.parentWidget() is not self.editor_dialog:
+                self.editor_dialog.layout().insertWidget(0,self.chart_settings,1)
+            self.chart_settings.show()
+            available=self.screen().availableGeometry()
+            self.editor_dialog.resize(min(410,available.width()-32),min(650,available.height()-48))
+            self.editor_dialog.show()
+
+    def resizeEvent(self,event):
+        super().resizeEvent(event)
+        self._arrange_chart_editor()
+
+    def _view_chart_data(self):
+        curve = next((c for c in self.graph_model.curves if c.source_sheet), None)
+        if curve:
+            self.request_jump_to_sheet.emit(curve.source_sheet, curve.source_workbook)
 
     def _update_source_bar(self):
         """Refreshes the linked worksheet indicators with 1-click jump buttons."""
@@ -257,7 +449,7 @@ class GraphViewWidget(QWidget):
                 w.setParent(None)
                 w.deleteLater()
 
-        lbl_icon = QLabel("🔗 Linked Table:")
+        lbl_icon = QLabel("Worksheet")
         lbl_icon.setObjectName("LinkedSourceIcon")
         self.source_bar_layout.addWidget(lbl_icon)
 
@@ -277,7 +469,7 @@ class GraphViewWidget(QWidget):
         else:
             for (s_name, wb_name), curve_labels in sheet_map.items():
                 btn_sheet = QToolButton()
-                btn_sheet.setText(f"📄 {s_name} ↗")
+                btn_sheet.setText(f"{s_name} ↗")
                 btn_sheet.setToolTip(f"Jump directly to worksheet '{s_name}' ({wb_name})\nPlotted series: {', '.join(curve_labels[:4])}")
                 btn_sheet.setCursor(Qt.CursorShape.PointingHandCursor)
                 btn_sheet.clicked.connect(lambda checked=False, s=s_name, w=wb_name: self.request_jump_to_sheet.emit(s, w))
@@ -327,12 +519,37 @@ class GraphViewWidget(QWidget):
             self.curves_changed.emit()
 
     def _open_edit_labels_dialog(self):
-        from omnigraph.ui.dialogs.quick_labels_dialog import QuickLabelsDialog
-        dlg = QuickLabelsDialog(self.graph_model, self)
-        if dlg.exec():
-            self.refresh_plot()
-            self._sync_quick_labels()
-            self.labels_changed.emit()
+        self.editor_tabs.setCurrentIndex(0)
+        self.edit_chart_button.setChecked(True)
+        self.txt_quick_title.setFocus()
+
+    def _sync_plot_type_actions(self):
+        curves=[c for c in self.graph_model.curves if not c.is_fit_curve]
+        kinds={c.plot_type for c in curves}
+        self.change_plot_button.setEnabled(bool(curves))
+        for kind,action in self.change_plot_actions.items():
+            action.setChecked(kinds=={kind})
+
+    def _edit_one_series(self):
+        self.editor_tabs.setCurrentWidget(self.series_editor)
+        self.edit_chart_button.setChecked(True)
+        self.series_editor.plot_type.setFocus()
+
+    def change_plot_type(self,plot_type):
+        if not change_graph_plot_type(self.graph_model,plot_type):
+            return
+        self.refresh_plot()
+        self.curves_changed.emit()
+        self.labels_changed.emit()
+
+    def _on_series_style_changed(self):
+        self.refresh_plot()
+        self.labels_changed.emit()
+
+    def _on_grid_toggled(self,enabled):
+        self.graph_model.show_grid_major=enabled
+        self.refresh_plot()
+        self.labels_changed.emit()
 
     def _sync_quick_labels(self):
         """Synchronizes quick-label text fields with current graph model state."""
@@ -356,7 +573,7 @@ class GraphViewWidget(QWidget):
             p_text = getattr(self.graph_model, "panel_label", "")
             self.btn_quick_panel.setText(p_text if p_text else "None ▾")
 
-        has_y2 = bool(self.graph_model.y2_title) or any(getattr(c, "axis_assignment", "primary") == "secondary" for c in self.graph_model.curves)
+        has_y2 = self.graph_model.layout_mode=="twin_x" or bool(self.graph_model.y2_title) or any(getattr(c, "axis", "primary") == "secondary" for c in self.graph_model.curves)
         if hasattr(self, "lbl_quick_y2") and hasattr(self, "txt_quick_y2"):
             self.txt_quick_y2.blockSignals(True)
             self.lbl_quick_y2.setHidden(not has_y2)
@@ -365,6 +582,17 @@ class GraphViewWidget(QWidget):
                 self.txt_quick_y2.setText(self.graph_model.y2_title or "")
             self.txt_quick_y2.blockSignals(False)
 
+        if hasattr(self,"txt_quick_y_bottom"):
+            stacked=self.graph_model.layout_mode=="stacked_2x1"
+            self.lbl_quick_y_bottom.setVisible(stacked)
+            self.txt_quick_y_bottom.setVisible(stacked)
+            self.txt_quick_y_bottom.setText(self.graph_model.y_bottom_title or "")
+        if hasattr(self,"series_editor"):
+            self.series_editor.sync()
+        if hasattr(self,"show_grid_checkbox"):
+            self.show_grid_checkbox.blockSignals(True)
+            self.show_grid_checkbox.setChecked(self.graph_model.show_grid_major)
+            self.show_grid_checkbox.blockSignals(False)
         self.txt_quick_title.blockSignals(False)
         self.txt_quick_x.blockSignals(False)
         self.txt_quick_y.blockSignals(False)
@@ -374,6 +602,10 @@ class GraphViewWidget(QWidget):
         self.graph_model.title_text = self.txt_quick_title.text().strip()
         self.graph_model.x_title = self.txt_quick_x.text().strip()
         self.graph_model.y_title = self.txt_quick_y.text().strip()
+        if not self.txt_quick_y2.isHidden():
+            self.graph_model.y2_title=self.txt_quick_y2.text().strip()
+        if hasattr(self,"txt_quick_y_bottom") and self.graph_model.layout_mode=="stacked_2x1":
+            self.graph_model.y_bottom_title=self.txt_quick_y_bottom.text().strip()
 
         self.refresh_plot()
         self.labels_changed.emit()
@@ -382,7 +614,7 @@ class GraphViewWidget(QWidget):
             win.statusBar().showMessage("✓ Graph labels updated", 2500)
 
     def _toggle_quick_label_bar(self):
-        self.label_bar.setVisible(not self.label_bar.isVisible())
+        self.edit_chart_button.setChecked(not self.edit_chart_button.isChecked())
 
     def _edit_title_prompt(self):
         self.canvas_widget.edit_graph_title()
@@ -411,11 +643,14 @@ class GraphViewWidget(QWidget):
     def refresh_plot(self):
         """Forces re-render of canvas."""
         self.canvas_widget.refresh()
+        self._sync_plot_type_actions()
         self._update_source_bar()
+        self._sync_quick_labels()
 
     def _on_theme_changed(self, theme_name: str):
         self.graph_model.theme = theme_name
         self.refresh_plot()
+        self.labels_changed.emit()
 
     def _select_tool(self, tool_name: str):
         self.btn_pointer.setChecked(tool_name == "pointer")
@@ -589,10 +824,10 @@ class GraphViewWidget(QWidget):
             return
 
         msg = QMessageBox(self)
-        msg.setWindowTitle("Direct Data Ingestion")
+        msg.setWindowTitle("Add dropped data")
         msg.setText(f"You dropped {len(data_paths)} data file(s) onto this graph.\nHow would you like to open them?")
-        btn_layer = msg.addButton("➕ Add as Layer to this Graph", QMessageBox.ButtonRole.AcceptRole)
-        btn_sheet = msg.addButton("📄 Open in New Worksheet", QMessageBox.ButtonRole.ActionRole)
+        btn_layer = msg.addButton("Add to this graph", QMessageBox.ButtonRole.AcceptRole)
+        btn_sheet = msg.addButton("Open as worksheet", QMessageBox.ButtonRole.ActionRole)
         msg.addButton(QMessageBox.StandardButton.Cancel)
         msg.exec()
 

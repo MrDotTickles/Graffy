@@ -66,5 +66,27 @@ def ensure_style_icons() -> dict:
         p.end()
         pix_d.save(icons["close_dark"])
 
+    # SVG indicator glyphs stay crisp at fractional and high display scaling.
+    glyphs = {
+        "check": '<path d="m4 10 4 4 8-9"/>',
+        "mixed": '<path d="M5 10h10"/>',
+        "radio": '<circle cx="10" cy="10" r="4" fill="white" stroke="none"/>',
+    }
+    for name, shape in glyphs.items():
+        path=os.path.join(ICONS_DIR, name+".svg")
+        if not os.path.exists(path):
+            with open(path,"w",encoding="utf-8") as stream:
+                stream.write('<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="white" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">'+shape+'</svg>')
+        icons[name]=path
+
+    for tone, color in (("light","#334155"),("dark","#e6ebf5")):
+        for direction, shape in (("down","m3 5 5 5 5-5"),("up","m3 10 5-5 5 5")):
+            name="arrow_"+direction+"_"+tone
+            path=os.path.join(ICONS_DIR,name+".svg")
+            if not os.path.exists(path):
+                with open(path,"w",encoding="utf-8") as stream:
+                    stream.write('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><path d="'+shape+'" fill="none" stroke="'+color+'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>')
+            icons[name]=path
+
     # Return normalized paths with forward slashes for QSS url()
     return {k: v.replace("\\", "/") for k, v in icons.items()}

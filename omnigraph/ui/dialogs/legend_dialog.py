@@ -1,211 +1,211 @@
-"""
-Key & Legend Editor Dialog.
-Allows users to quickly rename series labels in the key, customize legend positioning,
-frame borders, font sizes, and apply batch label naming presets.
-"""
-
-from typing import List, Optional
-from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QGroupBox,
-    QDialogButtonBox, QLabel, QScrollArea, QWidget, QCheckBox, QComboBox,
-    QSpinBox, QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
-    QInputDialog, QMessageBox
-)
+"""One editor for series names/colors and legend appearance."""
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor
-
-from omnigraph.core.project import GraphModel
-
+from PyQt6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QFormLayout,QLabel,
+    QTabWidget,QWidget,QCheckBox,QComboBox,QSpinBox,QPushButton,QTableWidget,
+    QTableWidgetItem,QHeaderView,QInputDialog,QMessageBox,QToolButton,QMenu)
+from omnigraph.ui.color_field import ColorButton,ColorField
+from omnigraph.core.plot_editing import set_series_color
+from omnigraph.graphing.themes import get_theme_palette
+from omnigraph.ui.dialogs.dialog_layout import finish_dialog
 
 class LegendEditorDialog(QDialog):
-    """Intuitive modal for editing series names in the key (legend) and legend styling."""
-
-    def __init__(self, graph: GraphModel, parent=None, on_apply_callback=None):
+    def __init__(self,graph,parent=None,on_apply_callback=None,project=None):
         super().__init__(parent)
-        self.graph = graph
-        self.on_apply_callback = on_apply_callback
-        self.setWindowTitle(f"🔑 Key & Legend Editor - {graph.title}")
-        self.resize(540, 480)
-        self.setMinimumSize(460, 380)
+        self.graph=graph
+        self.project=project
+        self.on_apply_callback=on_apply_callback
+        self.setWindowTitle("Series and legend")
+        self.resize(620,580)
         self._init_ui()
 
     def _init_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setSpacing(10)
-
-        # Header description
-        lbl_info = QLabel("<b>Edit Series Labels in the Key</b><br>"
-                          "<span style='color: #64748b; font-size: 11px;'>"
-                          "Rename how each data layer appears in the legend, or adjust placement and appearance."
-                          "</span>")
-        lbl_info.setWordWrap(True)
-        layout.addWidget(lbl_info)
-
-        # Series Labels Group
-        grp_series = QGroupBox("Series Labels in Key")
-        v_series = QVBoxLayout(grp_series)
-        v_series.setSpacing(6)
-
-        # Table for series labels
-        self.table_series = QTableWidget()
-        self.table_series.setColumnCount(4)
-        self.table_series.setHorizontalHeaderLabels(["Layer", "Color", "Type", "Key Label"])
-        self.table_series.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self.table_series.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        self.table_series.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self.table_series.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        self.table_series.verticalHeader().setVisible(False)
+        layout=QVBoxLayout(self)
+        title=QLabel("Series and legend")
+        title.setProperty("role","heading")
+        layout.addWidget(title)
+        hint=QLabel("Choose series colors and names, then set how the legend looks.")
+        hint.setProperty("role","muted")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        self.tabs=QTabWidget()
+        layout.addWidget(self.tabs,1)
+        series=QWidget()
+        content=QVBoxLayout(series)
+        hint=QLabel("Click a color to recolor the matching line, symbols and legend key. Double-click a name to rename it. Uncheck a series to hide it.")
+        hint.setWordWrap(True)
+        content.addWidget(hint)
+        self.table_series=QTableWidget(0,4)
+        self.table_series.setHorizontalHeaderLabels(["Show","Color","Plot","Series name"])
+        for column in range(3):
+            self.table_series.horizontalHeader().setSectionResizeMode(column,QHeaderView.ResizeMode.ResizeToContents)
+        self.table_series.horizontalHeader().setSectionResizeMode(3,QHeaderView.ResizeMode.Stretch)
+        self.table_series.verticalHeader().hide()
         self.table_series.setAlternatingRowColors(True)
-
+        self.table_series.setMinimumHeight(130)
         self._populate_series_table()
-        v_series.addWidget(self.table_series)
-
-        # Quick preset buttons row
-        btn_row = QHBoxLayout()
-        btn_number = QPushButton("1, 2, 3...")
-        btn_number.setToolTip("Auto-number series labels (Series 1, Series 2, ...)")
-        btn_number.clicked.connect(self._preset_number_series)
-        btn_row.addWidget(btn_number)
-
-        btn_prefix = QPushButton("Add Prefix...")
-        btn_prefix.setToolTip("Prepend text to all series labels")
-        btn_prefix.clicked.connect(self._preset_add_prefix)
-        btn_row.addWidget(btn_prefix)
-
-        btn_suffix = QPushButton("Add Suffix...")
-        btn_suffix.setToolTip("Append text to all series labels")
-        btn_suffix.clicked.connect(self._preset_add_suffix)
-        btn_row.addWidget(btn_suffix)
-
-        btn_clear = QPushButton("Reset to Y Column")
-        btn_clear.setToolTip("Reset labels back to their source column names")
-        btn_clear.clicked.connect(self._preset_reset_to_columns)
-        btn_row.addWidget(btn_clear)
-
-        v_series.addLayout(btn_row)
-        layout.addWidget(grp_series)
-
-        # Legend Appearance Group
-        grp_opts = QGroupBox("Key / Legend Display Options")
-        fl_opts = QFormLayout(grp_opts)
-
-        self.chk_show = QCheckBox("Show Key / Legend on Graph")
+        content.addWidget(self.table_series,1)
+        batch=QToolButton()
+        batch.setText("Rename all…")
+        batch.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        menu=QMenu(batch)
+        menu.addAction("Number series",self._preset_number_series)
+        menu.addAction("Add a prefix…",self._preset_add_prefix)
+        menu.addAction("Add a suffix…",self._preset_add_suffix)
+        menu.addSeparator()
+        menu.addAction("Use source column names",self._preset_reset_to_columns)
+        batch.setMenu(menu)
+        content.addWidget(batch,0,Qt.AlignmentFlag.AlignLeft)
+        self.tabs.addTab(series,"Series")
+        legend=QWidget()
+        options=QVBoxLayout(legend)
+        self.chk_show=QCheckBox("Show legend")
         self.chk_show.setChecked(self.graph.legend_show)
-        fl_opts.addRow("Visibility:", self.chk_show)
-
-        self.combo_pos = QComboBox()
-        self.combo_pos.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        self.combo_pos.setMinimumContentsLength(8)
-        self.combo_pos.addItems([
-            "best", "upper right", "upper left", "lower left",
-            "lower right", "center right", "outside right"
-        ])
+        options.addWidget(self.chk_show)
+        self.legend_options=QWidget()
+        form=QFormLayout(self.legend_options)
+        form.setContentsMargins(0,0,0,0)
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self.combo_pos=QComboBox()
+        self.combo_pos.addItems(["best","upper right","upper left","lower left","lower right","center right","center left","upper center","lower center","center","outside right","outside top"])
+        if self.graph.legend_location not in [self.combo_pos.itemText(i) for i in range(self.combo_pos.count())]:
+            self.combo_pos.addItem(self.graph.legend_location)
         self.combo_pos.setCurrentText(self.graph.legend_location)
-        fl_opts.addRow("Position:", self.combo_pos)
-
-        row_style = QHBoxLayout()
-        self.chk_frame = QCheckBox("Draw Border Frame")
-        self.chk_frame.setChecked(self.graph.legend_frame)
-        row_style.addWidget(self.chk_frame)
-
-        row_style.addSpacing(20)
-        row_style.addWidget(QLabel("Font Size:"))
-        self.spn_fs = QSpinBox()
-        self.spn_fs.setRange(6, 28)
+        form.addRow("Position",self.combo_pos)
+        self.spn_fs=QSpinBox()
+        self.spn_fs.setRange(6,48)
         self.spn_fs.setValue(int(self.graph.legend_font_size))
-        row_style.addWidget(self.spn_fs)
-        row_style.addStretch()
-
-        fl_opts.addRow("Box & Font:", row_style)
-        layout.addWidget(grp_opts)
-
-        # Dialog Buttons
-        btn_layout = QHBoxLayout()
-        self.btn_apply = QPushButton("Apply")
-        self.btn_apply.setToolTip("Apply changes immediately to canvas")
+        form.addRow("Text size (pt)",self.spn_fs)
+        self.text_color=ColorField(self.graph.legend_text_color,title="Legend text color")
+        form.addRow("Text color",self.text_color)
+        self.chk_frame=QCheckBox("Show legend box")
+        self.chk_frame.setChecked(self.graph.legend_frame)
+        form.addRow(self.chk_frame)
+        self.frame_options=QWidget()
+        frame_form=QFormLayout(self.frame_options)
+        frame_form.setContentsMargins(0,0,0,0)
+        frame_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        self.background_color=ColorField(self.graph.legend_face_color,title="Legend background color")
+        self.border_color=ColorField(self.graph.legend_edge_color,title="Legend border color")
+        self.opacity=QSpinBox()
+        self.opacity.setRange(0,100)
+        self.opacity.setSuffix(" %")
+        self.opacity.setValue(round(self.graph.legend_frame_alpha*100))
+        frame_form.addRow("Background",self.background_color)
+        frame_form.addRow("Border",self.border_color)
+        frame_form.addRow("Box opacity",self.opacity)
+        form.addRow(self.frame_options)
+        self.chk_show.toggled.connect(self.legend_options.setEnabled)
+        self.legend_options.setEnabled(self.chk_show.isChecked())
+        self.chk_frame.toggled.connect(self.frame_options.setEnabled)
+        self.frame_options.setEnabled(self.chk_frame.isChecked())
+        options.addWidget(self.legend_options)
+        note=QLabel("Auto uses the figure theme. Series colors also change the lines or symbols on your graph.")
+        note.setWordWrap(True)
+        note.setProperty("role","muted")
+        options.addWidget(note)
+        options.addStretch()
+        self.tabs.addTab(legend,"Legend")
+        self.status=QLabel()
+        self.status.setWordWrap(True)
+        layout.addWidget(self.status)
+        buttons=QHBoxLayout()
+        self.btn_apply=QPushButton("Apply")
         self.btn_apply.clicked.connect(self._apply_changes)
-        btn_layout.addWidget(self.btn_apply)
-
-        btn_layout.addStretch()
-
-        btn_cancel = QPushButton("Cancel")
-        btn_cancel.clicked.connect(self.reject)
-        btn_layout.addWidget(btn_cancel)
-
-        btn_ok = QPushButton("OK")
-        btn_ok.setDefault(True)
-        btn_ok.setStyleSheet("font-weight: bold; background-color: #0284c7; color: white; padding: 5px 15px; border-radius: 4px;")
-        btn_ok.clicked.connect(self._on_ok)
-        btn_layout.addWidget(btn_ok)
-
-        layout.addLayout(btn_layout)
+        buttons.addWidget(self.btn_apply)
+        buttons.addStretch()
+        cancel=QPushButton("Cancel")
+        cancel.clicked.connect(self.reject)
+        buttons.addWidget(cancel)
+        self.btn_save=QPushButton("Save changes")
+        self.btn_save.setDefault(True)
+        self.btn_save.setProperty("role","primary")
+        self.btn_save.clicked.connect(self._on_ok)
+        buttons.addWidget(self.btn_save)
+        layout.addLayout(buttons)
+        finish_dialog(self)
 
     def _populate_series_table(self):
         self.table_series.setRowCount(len(self.graph.curves))
-        for row, curve in enumerate(self.graph.curves):
-            # Layer number
-            item_num = QTableWidgetItem(f"Layer {row + 1}")
-            item_num.setFlags(Qt.ItemFlag.ItemIsEnabled)
-            self.table_series.setItem(row, 0, item_num)
-
-            # Color swatch
-            item_col = QTableWidgetItem("  ●  ")
-            item_col.setForeground(QColor(curve.color))
-            item_col.setFlags(Qt.ItemFlag.ItemIsEnabled)
-            self.table_series.setItem(row, 1, item_col)
-
-            # Plot type
-            item_type = QTableWidgetItem(curve.plot_type)
-            item_type.setFlags(Qt.ItemFlag.ItemIsEnabled)
-            self.table_series.setItem(row, 2, item_type)
-
-            # Editable Key Label
-            item_label = QTableWidgetItem(curve.label or f"Curve {row + 1}")
-            self.table_series.setItem(row, 3, item_label)
+        self.color_buttons=[]
+        for row,curve in enumerate(self.graph.curves):
+            show=QTableWidgetItem(str(row+1))
+            show.setFlags(Qt.ItemFlag.ItemIsEnabled|Qt.ItemFlag.ItemIsUserCheckable|Qt.ItemFlag.ItemIsSelectable)
+            show.setCheckState(Qt.CheckState.Checked if curve.visible else Qt.CheckState.Unchecked)
+            self.table_series.setItem(row,0,show)
+            button=ColorButton(curve.color,title=f"Color for {curve.label or 'series '+str(row+1)}")
+            self.color_buttons.append(button)
+            self.table_series.setCellWidget(row,1,button)
+            kind=QTableWidgetItem(curve.plot_type.replace("_"," "))
+            kind.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            self.table_series.setItem(row,2,kind)
+            self.table_series.setItem(row,3,QTableWidgetItem(curve.label or f"Curve {row+1}"))
+            self.table_series.setRowHeight(row,40)
 
     def _apply_changes(self):
-        """Saves current table edits and legend properties to GraphModel and refreshes."""
+        fields=("legend_show","legend_location","legend_frame","legend_font_size","legend_text_color","legend_face_color","legend_edge_color","legend_frame_alpha")
+        previous={key:getattr(self.graph,key) for key in fields}
+        previous_curves=[(c,c.label,c.color,c.visible,c.marker_face_color,c.marker_edge_color) for c in self.graph.curves]
         try:
-            for row in range(min(len(self.graph.curves), self.table_series.rowCount())):
-                item = self.table_series.item(row, 3)
-                if item:
-                    self.graph.curves[row].label = item.text().strip() or f"Curve {row + 1}"
-
-            self.graph.legend_show = self.chk_show.isChecked()
-            self.graph.legend_location = self.combo_pos.currentText()
-            self.graph.legend_frame = self.chk_frame.isChecked()
-            self.graph.legend_font_size = float(self.spn_fs.value())
-
+            # Commit any active cell editor before reading names.
+            self.table_series.setFocus()
+            for row,curve in enumerate(self.graph.curves[:self.table_series.rowCount()]):
+                item=self.table_series.item(row,3)
+                curve.label=(item.text().strip() if item else "") or f"Curve {row+1}"
+                palette=get_theme_palette(self.graph.theme)
+                effective=palette[row%len(palette)] if curve.color=="auto" else curve.color
+                set_series_color(curve,self.color_buttons[row].color(),effective)
+                curve.visible=self.table_series.item(row,0).checkState()==Qt.CheckState.Checked
+            self.graph.legend_show=self.chk_show.isChecked()
+            self.graph.legend_location=self.combo_pos.currentText()
+            self.graph.legend_frame=self.chk_frame.isChecked()
+            self.graph.legend_font_size=self.spn_fs.value()
+            self.graph.legend_text_color=self.text_color.color()
+            self.graph.legend_face_color=self.background_color.color()
+            self.graph.legend_edge_color=self.border_color.color()
+            self.graph.legend_frame_alpha=self.opacity.value()/100
             if callable(self.on_apply_callback):
                 self.on_apply_callback()
-        except Exception as e:
-            QMessageBox.warning(self, "Notice", f"Could not apply all legend changes:\n{e}")
+            self.status.setText("Changes applied to the figure.")
+            return True
+        except Exception as error:
+            for key,value in previous.items():
+                setattr(self.graph,key,value)
+            for curve,label,color,visible,fill,edge in previous_curves:
+                curve.label,curve.color,curve.visible=label,color,visible
+                curve.marker_face_color,curve.marker_edge_color=fill,edge
+            QMessageBox.warning(self,"Could not apply changes",str(error))
+            return False
 
     def _on_ok(self):
-        try:
-            self._apply_changes()
-        finally:
+        if self._apply_changes():
             self.accept()
 
     def _preset_number_series(self):
         for row in range(self.table_series.rowCount()):
-            self.table_series.setItem(row, 3, QTableWidgetItem(f"Series {row + 1}"))
+            self.table_series.setItem(row,3,QTableWidgetItem(f"Series {row+1}"))
 
     def _preset_add_prefix(self):
-        prefix, ok = QInputDialog.getText(self, "Add Prefix", "Enter prefix to prepend to each key label:")
+        prefix,ok=QInputDialog.getText(self,"Rename series","Text to add before each name:")
         if ok and prefix:
             for row in range(self.table_series.rowCount()):
-                cur = self.table_series.item(row, 3).text() if self.table_series.item(row, 3) else ""
-                self.table_series.setItem(row, 3, QTableWidgetItem(f"{prefix}{cur}"))
+                item=self.table_series.item(row,3)
+                self.table_series.setItem(row,3,QTableWidgetItem(prefix+(item.text() if item else "")))
 
     def _preset_add_suffix(self):
-        suffix, ok = QInputDialog.getText(self, "Add Suffix", "Enter suffix to append to each key label:")
+        suffix,ok=QInputDialog.getText(self,"Rename series","Text to add after each name:")
         if ok and suffix:
             for row in range(self.table_series.rowCount()):
-                cur = self.table_series.item(row, 3).text() if self.table_series.item(row, 3) else ""
-                self.table_series.setItem(row, 3, QTableWidgetItem(f"{cur}{suffix}"))
+                item=self.table_series.item(row,3)
+                self.table_series.setItem(row,3,QTableWidgetItem((item.text() if item else "")+suffix))
 
     def _preset_reset_to_columns(self):
-        for row, curve in enumerate(self.graph.curves):
-            col_name = getattr(curve, "y_col_name", None) or curve.label or f"Curve_{row + 1}"
-            self.table_series.setItem(row, 3, QTableWidgetItem(col_name))
+        for row,curve in enumerate(self.graph.curves):
+            label=None
+            if self.project:
+                workbook=self.project.get_workbook(curve.source_workbook)
+                sheet=next((s for s in workbook.sheets if s.name==curve.source_sheet),None) if workbook else None
+                column=sheet.get_column(curve.y_col_idx) if sheet else None
+                label=column.display_label if column else None
+            label=label or getattr(curve,"y_col_name",None) or curve.label or f"Curve_{row+1}"
+            self.table_series.setItem(row,3,QTableWidgetItem(label))

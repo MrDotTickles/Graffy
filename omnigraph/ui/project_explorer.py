@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import pyqtSignal, Qt, QSize
 from PyQt6.QtGui import QFont, QColor, QBrush, QAction
+from omnigraph.ui.styles.design import icon
 from omnigraph.core.project import Project, GraphModel, ReportModel, CurveModel
 from omnigraph.core.worksheet import Workbook, Worksheet, ColumnRole
 
@@ -72,11 +73,11 @@ class ProjectExplorerWidget(QWidget):
             return
         if self.project.filepath:
             fname = os.path.basename(self.project.filepath)
-            self.lbl_project_status.setText(f"💾 {fname}")
-            self.lbl_project_status.setStyleSheet("font-size: 10px; color: #16a34a; font-weight: 500;")
+            self.lbl_project_status.setText(fname)
+            self.lbl_project_status.setStyleSheet("font-size: 11px;")
         else:
-            self.lbl_project_status.setText("● Unsaved Project")
-            self.lbl_project_status.setStyleSheet("font-size: 10px; color: #ea580c; font-weight: 500;")
+            self.lbl_project_status.setText("Not saved to a file")
+            self.lbl_project_status.setStyleSheet("font-size: 11px;")
 
     def update_header(self):
         """Updates project title and save file status label."""
@@ -91,9 +92,10 @@ class ProjectExplorerWidget(QWidget):
         self.populate_tree()
 
     def _init_ui(self):
+        self.setObjectName("ProjectExplorerWidget")
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(6)
+        layout.setContentsMargins(10, 8, 10, 10)
+        layout.setSpacing(10)
 
         # 1. Project Title & File Card
         self.header_card = QWidget()
@@ -102,14 +104,16 @@ class ProjectExplorerWidget(QWidget):
         card_layout.setContentsMargins(8, 6, 6, 6)
         card_layout.setSpacing(6)
 
-        lbl_icon = QLabel("📁")
-        lbl_icon.setStyleSheet("font-size: 16px;")
+        lbl_icon = QLabel()
+        lbl_icon.setPixmap(icon("folder").pixmap(22,22))
         card_layout.addWidget(lbl_icon)
 
         text_layout = QVBoxLayout()
         text_layout.setSpacing(1)
         self.lbl_project_name = QLabel(self.project.name)
-        self.lbl_project_name.setStyleSheet("font-weight: bold; font-size: 12px;")
+        self.lbl_project_name.setStyleSheet("font-weight: 600; font-size: 13px;")
+        self.lbl_project_name.setWordWrap(True)
+        self.lbl_project_name.setMinimumWidth(0)
         self.lbl_project_status = QLabel()
         self._refresh_status_label()
         text_layout.addWidget(self.lbl_project_name)
@@ -135,12 +139,14 @@ class ProjectExplorerWidget(QWidget):
         tools_layout = QHBoxLayout()
         tools_layout.setSpacing(4)
 
-        btn_add_sheet = QPushButton("➕ Sheet")
+        btn_add_sheet = QPushButton("Worksheet")
+        btn_add_sheet.setIcon(icon("plus"))
         btn_add_sheet.setToolTip("Add new worksheet to project")
         btn_add_sheet.clicked.connect(self.request_new_sheet.emit)
         tools_layout.addWidget(btn_add_sheet, 1)
 
-        btn_add_graph = QPushButton("➕ Graph")
+        btn_add_graph = QPushButton("Graph")
+        btn_add_graph.setIcon(icon("plus"))
         btn_add_graph.setToolTip("Create new graph")
         btn_add_graph.clicked.connect(self.request_new_graph.emit)
         tools_layout.addWidget(btn_add_graph, 1)
@@ -150,13 +156,13 @@ class ProjectExplorerWidget(QWidget):
         btn_refresh.setToolTip("Refresh project explorer")
         btn_refresh.setStyleSheet("padding: 4px 8px; font-size: 13px;")
         btn_refresh.clicked.connect(self.populate_tree)
-        tools_layout.addWidget(btn_refresh)
+        btn_refresh.hide()
 
         layout.addLayout(tools_layout)
 
         # 2. Live Search & Filter Bar
         self.txt_search = QLineEdit(self)
-        self.txt_search.setPlaceholderText("🔍 Filter items (e.g. Sheet, XRD, Fit)...")
+        self.txt_search.setPlaceholderText("Find a worksheet, graph, or report…")
         self.txt_search.setClearButtonEnabled(True)
         self.txt_search.textChanged.connect(self._filter_tree)
         layout.addWidget(self.txt_search)
@@ -167,7 +173,9 @@ class ProjectExplorerWidget(QWidget):
         self.tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.tree.header().setStretchLastSection(False)
-        self.tree.header().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.tree.header().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.tree.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.tree.setIndentation(12)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._on_context_menu)
 
@@ -188,7 +196,7 @@ class ProjectExplorerWidget(QWidget):
         header.setFont(0, font)
 
         dark = self._is_dark_theme()
-        header_color = QColor("#89b4fa" if dark else "#0284c7")
+        header_color = QColor("#a4b0c5" if dark else "#69768c")
         header.setForeground(0, QBrush(header_color))
         header.setExpanded(True)
         return header
@@ -205,11 +213,11 @@ class ProjectExplorerWidget(QWidget):
 
         # 1. DATA TABLES (Worksheets)
         sheets_count = sum(len(wb.sheets) for wb in self.project.workbooks)
-        cat_data = self._create_category_header("📊  DATA TABLES", sheets_count)
+        cat_data = self._create_category_header("WORKSHEETS", sheets_count)
 
         if sheets_count == 0:
             empty_item = QTreeWidgetItem(cat_data)
-            empty_item.setText(0, "  (No worksheets yet)")
+            empty_item.setText(0, "Import data to begin")
             empty_item.setFlags(Qt.ItemFlag.NoItemFlags)
         else:
             multiple_wbs = len(self.project.workbooks) > 1
@@ -222,7 +230,8 @@ class ProjectExplorerWidget(QWidget):
                     plotted_graphs = [g.title for g in self.project.graphs if any(c.source_sheet == ws.name for c in g.curves)]
                     plot_badge = f" ⇨ 📈 {', '.join(plotted_graphs)}" if plotted_graphs else ""
 
-                    ws_item.setText(0, f"📄 {ws.name} ({c_count} cols){plot_badge}")
+                    ws_item.setText(0, ws.name)
+                    ws_item.setIcon(0, icon("sheet"))
                     ws_item.setData(0, Qt.ItemDataRole.UserRole, ("sheet", ws.name, wb.name))
 
                     col_names = [c.display_label for c in ws.columns[:8]]
@@ -240,11 +249,11 @@ class ProjectExplorerWidget(QWidget):
 
         # 2. GRAPHS (Plots)
         graphs_count = len(self.project.graphs)
-        cat_graphs = self._create_category_header("📈  GRAPHS", graphs_count)
+        cat_graphs = self._create_category_header("GRAPHS", graphs_count)
 
         if graphs_count == 0:
             empty_item = QTreeWidgetItem(cat_graphs)
-            empty_item.setText(0, "  (No graphs yet - click + Graph)")
+            empty_item.setText(0, "Your graphs appear here")
             empty_item.setFlags(Qt.ItemFlag.NoItemFlags)
         else:
             for g in self.project.graphs:
@@ -256,7 +265,8 @@ class ProjectExplorerWidget(QWidget):
                 source_sheets = list(dict.fromkeys(c.source_sheet for c in g.curves if c.source_sheet))
                 sheet_badge = f" ⇦ 📄 {', '.join(source_sheets)}" if source_sheets else ""
 
-                g_item.setText(0, f"📈 {g.title} ({curves_str}{sheet_badge})")
+                g_item.setText(0, g.title)
+                g_item.setIcon(0, icon("chart"))
                 g_item.setData(0, Qt.ItemDataRole.UserRole, ("graph", g.title, g.id))
 
                 curve_labels = [c.label for c in g.curves[:6]]
@@ -273,17 +283,18 @@ class ProjectExplorerWidget(QWidget):
 
         # 3. REPORTS & RESULTS (Analysis & Fit Reports)
         reports_count = len(self.project.reports)
-        cat_reports = self._create_category_header("📋  REPORTS & RESULTS", reports_count)
+        cat_reports = self._create_category_header("RESULTS", reports_count)
 
         if reports_count == 0:
             empty_item = QTreeWidgetItem(cat_reports)
-            empty_item.setText(0, "  (No reports yet - run Analysis)")
+            empty_item.setText(0, "Analysis results appear here")
             empty_item.setFlags(Qt.ItemFlag.NoItemFlags)
         else:
             for r in self.project.reports:
                 r_item = QTreeWidgetItem(cat_reports)
                 rep_type = r.report_type.capitalize() if r.report_type else "Fit"
-                r_item.setText(0, f"📋 {r.title}")
+                r_item.setText(0, r.title)
+                r_item.setIcon(0, icon("report"))
                 r_item.setData(0, Qt.ItemDataRole.UserRole, ("report", r.title, r.id))
                 r_item.setToolTip(
                     0,
@@ -367,7 +378,7 @@ class ProjectExplorerWidget(QWidget):
             # Blank space context menu
             menu.addAction("➕ Add Worksheet", self.request_new_sheet.emit)
             menu.addAction("➕ Create New Graph", self.request_new_graph.emit)
-            menu.addAction("🤖 AI Smart Data Import & Plot...", self.request_ai_extract.emit)
+            menu.addAction("Import data into a graph...", self.request_ai_extract.emit)
             menu.addSeparator()
             menu.addAction("🔄 Refresh Explorer", self.populate_tree)
             menu.exec(self.tree.mapToGlobal(pos))
@@ -379,7 +390,7 @@ class ProjectExplorerWidget(QWidget):
             header_text = item.text(0)
             if "DATA TABLES" in header_text:
                 menu.addAction("➕ Add Worksheet", self.request_new_sheet.emit)
-                menu.addAction("🤖 AI Smart Data Import & Plot...", self.request_ai_extract.emit)
+                menu.addAction("Import data into a graph...", self.request_ai_extract.emit)
             elif "GRAPHS" in header_text:
                 menu.addAction("➕ Create New Graph", self.request_new_graph.emit)
             elif "REPORTS" in header_text:

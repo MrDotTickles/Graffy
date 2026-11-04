@@ -6,7 +6,7 @@ Launches the scientific graphing desktop application.
 import sys
 import os
 import argparse
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtCore import Qt, QTimer
 
 from omnigraph.ui.main_window import MainWindow
@@ -27,6 +27,9 @@ def main():
         )
 
     app = QApplication(sys.argv)
+    app.setStyle("Fusion")
+    from PyQt6.QtGui import QFont
+    app.setFont(QFont("Segoe UI", 10))
     app.setApplicationName("Graffy")
     app.setOrganizationName("Graffy")
 
@@ -56,15 +59,24 @@ def main():
         try:
             project = Project.load_from_file(args.project_file)
         except Exception as e:
-            print(f"Warning: Failed to load project {args.project_file}: {e}")
+            QMessageBox.warning(None, "Could not open project", f"Graffy could not open this project.\n\n{e}")
 
     # Fallback to rich spectroscopy sample on first launch so user immediately sees awesome graphs and data
     if project is None:
-        project = SampleProjects.create_spectroscopy_sample()
+        project = SampleProjects.create_spectroscopy_sample() if args.smoke_test else Project.create_default("Untitled Project")
 
     window = MainWindow(project=project)
     window.setWindowIcon(app_icon)
+    if not args.smoke_test:
+        window.enable_guided_workspace()
+        available = app.primaryScreen().availableGeometry()
+        window.setMinimumSize(min(800, max(320, available.width() - 32)),
+                              min(560, max(240, available.height() - 48)))
     window.showMaximized()
+    welcome_pending = False
+    if not args.smoke_test and not args.project_file and not args.sample:
+        from PyQt6.QtCore import QSettings
+        welcome_pending = QSettings("Graffy", "Graffy").value("ui/show_welcome", True, type=bool)
     if args.smoke_test:
         from omnigraph.core.release_smoke import run_packaged_checks
         try:
@@ -78,11 +90,17 @@ def main():
             sys.exit(1)
         QTimer.singleShot(1000, app.quit)
     else:
-        QTimer.singleShot(2500, window.check_updates_in_background)
-        update_timer = QTimer(window)
-        update_timer.setInterval(6 * 60 * 60 * 1000)
-        update_timer.timeout.connect(window.check_updates_in_background)
-        update_timer.start()
+        def begin_session():
+            # A welcome dialog runs a nested event loop. Start update timers only
+            # after it closes so an update dialog cannot interrupt onboarding.
+            if welcome_pending:
+                window.show_getting_started()
+            QTimer.singleShot(2500, window.check_updates_in_background)
+            window._periodic_update_timer = QTimer(window)
+            window._periodic_update_timer.setInterval(6 * 60 * 60 * 1000)
+            window._periodic_update_timer.timeout.connect(window.check_updates_in_background)
+            window._periodic_update_timer.start()
+        QTimer.singleShot(0, begin_session)
     app.aboutToQuit.connect(window.wait_for_update_check)
 
     sys.exit(app.exec())

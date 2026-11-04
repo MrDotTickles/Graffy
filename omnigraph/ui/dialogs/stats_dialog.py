@@ -20,7 +20,7 @@ class StatsDialog(QDialog):
     def __init__(self, columns: List[Column], parent=None):
         super().__init__(parent)
         self.columns = columns
-        self.setWindowTitle("Statistics & Hypothesis Testing")
+        self.setWindowTitle("Explore statistics")
         self.resize(720, 480)
         self.setMinimumSize(560, 380)
         self._init_ui()
@@ -61,11 +61,14 @@ class StatsDialog(QDialog):
 
         l1.addWidget(self.table_stats)
 
-        btn_copy_tsv = QPushButton("📋 Copy Table to Clipboard (TSV)")
+        btn_copy_tsv = QPushButton("Copy results")
         btn_copy_tsv.clicked.connect(self._copy_stats_tsv)
         l1.addWidget(btn_copy_tsv)
+        self.copy_status = QLabel("")
+        self.copy_status.setWordWrap(True)
+        l1.addWidget(self.copy_status)
 
-        tabs.addTab(tab1, "Descriptive Statistics")
+        tabs.addTab(tab1, "Summary")
 
         # Tab 2: Two-Sample t-Test
         tab2 = QWidget()
@@ -100,31 +103,35 @@ class StatsDialog(QDialog):
         opt_layout.addStretch()
         l2.addLayout(opt_layout)
 
-        btn_run_ttest = QPushButton("📊 Perform t-Test")
+        btn_run_ttest = QPushButton("Compare groups")
         btn_run_ttest.clicked.connect(self._run_ttest)
         l2.addWidget(btn_run_ttest)
 
-        self.btn_add_bracket = QPushButton("⭐ Add Significance Bracket to Active Graph")
+        self.btn_add_bracket = QPushButton("Add significance bracket to graph")
         self.btn_add_bracket.setEnabled(False)
         app = QApplication.instance()
         is_dark = getattr(app, "is_dark_theme", False) or "background-color: #181825" in (app.styleSheet() if app else "")
         bracket_color = "#38bdf8" if is_dark else "#0284c7"
-        self.btn_add_bracket.setStyleSheet(f"font-weight: 600; color: {bracket_color};")
+        self.btn_add_bracket.setStyleSheet("")
         self.btn_add_bracket.clicked.connect(self._add_bracket_to_graph)
         l2.addWidget(self.btn_add_bracket)
 
         self.last_ttest_result = None
 
         self.txt_ttest_res = QTextBrowser()
-        self.txt_ttest_res.setHtml("<i>Select two columns and click 'Perform t-Test' to evaluate significance.</i>")
+        self.txt_ttest_res.setHtml("<i>Choose two columns, then Compare groups to evaluate significance.</i>")
         l2.addWidget(self.txt_ttest_res)
 
-        tabs.addTab(tab2, "Two-Sample t-Test")
+        tabs.addTab(tab2, "Compare two groups")
 
         # Dialog buttons
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.accept)
         layout.addWidget(buttons)
+        self.chk_paired.setToolTip("Use paired data only when each row represents the same subject or a matched pair in both columns.")
+        self.chk_welch.setToolTip("Welch's test allows the two groups to have different variances. This changes the statistical test; choose based on your study.")
+        from omnigraph.ui.dialogs.dialog_layout import finish_dialog
+        finish_dialog(self)
 
     def _copy_stats_tsv(self):
         lines = []
@@ -137,7 +144,7 @@ class StatsDialog(QDialog):
             lines.append("\t".join([row_label] + row_cells))
 
         QApplication.clipboard().setText("\n".join(lines))
-        QMessageBox.information(self, "Copied", "Table copied to clipboard!")
+        self.copy_status.setText("Results copied. Paste them into your spreadsheet or report.")
 
     def _run_ttest(self):
         col1 = self.combo_g1.currentData()

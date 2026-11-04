@@ -337,7 +337,7 @@ def test_bar_chart_edge_coordinates():
     cm_hbar = CurveModel(plot_type="hbar")
     y_all_same = np.array([-3.5, -3.5, -3.5])
     x_vals = np.array([10.0, 20.0, 30.0])
-    art_hbar = PlotRenderer.render_curve(ax, cm_hbar, x_vals, y_all_same)
+    art_hbar = PlotRenderer.render_curve(ax, cm_hbar, y_all_same, x_vals)
     assert len(art_hbar.patches) == 3
     for p in art_hbar.patches:
         assert p.get_height() > 0.0

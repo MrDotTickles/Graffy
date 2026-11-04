@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QCheckBox, QLineEdit, QTextEdit, QTabWidget, QPushButton, QTableWidget,
     QTableWidgetItem, QFileDialog, QDialogButtonBox, QMessageBox, QLabel,
     QListWidget, QListWidgetItem, QGroupBox, QSplitter, QWidget, QHeaderView,
-    QApplication
+    QApplication, QToolButton, QMenu
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QFont
@@ -51,7 +51,7 @@ class ImportDialog(QDialog):
         self.auto_plot: bool = False
         self.plot_type: str = "line_symbol"
 
-        self.setWindowTitle("📥 Smart Data Import & Auto-Plot (Files or Raw Text)")
+        self.setWindowTitle("Import data")
         self.resize(840, 600)
         self.setMinimumSize(680, 500)
         self.setAcceptDrops(True)
@@ -105,7 +105,7 @@ class ImportDialog(QDialog):
         self.txt_path_display.setReadOnly(True)
         top_bar.addWidget(self.txt_path_display)
 
-        btn_browse = QPushButton("📁 Browse Files...")
+        btn_browse = QPushButton("Choose files…")
         btn_browse.setStyleSheet("font-weight: 600; padding: 5px 12px;")
         btn_browse.clicked.connect(self._browse_files)
         top_bar.addWidget(btn_browse)
@@ -124,6 +124,18 @@ class ImportDialog(QDialog):
         btn_clear.clicked.connect(self._clear_files)
         top_bar.addWidget(btn_clear)
 
+        for button in (btn_add, btn_remove, btn_clear):
+            top_bar.removeWidget(button)
+            button.hide()
+        file_actions = QToolButton()
+        file_actions.setText("More")
+        file_actions.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        file_menu = QMenu(file_actions)
+        file_menu.addAction("Add more files", self._add_files)
+        file_menu.addAction("Remove selected file", self._remove_selected_file)
+        file_menu.addAction("Clear files", self._clear_files)
+        file_actions.setMenu(file_menu)
+        top_bar.addWidget(file_actions)
         l_files.addLayout(top_bar)
 
         # List widget showing selected files
@@ -132,7 +144,7 @@ class ImportDialog(QDialog):
         self.list_files.currentRowChanged.connect(self._on_file_selection_changed)
         l_files.addWidget(self.list_files)
 
-        self.tabs_source.addTab(tab_files, "📁 From File(s)")
+        self.tabs_source.addTab(tab_files, "Files")
 
         # Tab 1: Raw Text / Clipboard
         tab_paste = QWidget()
@@ -163,6 +175,18 @@ class ImportDialog(QDialog):
         paste_btn_bar.addWidget(btn_sample_spec)
 
         paste_btn_bar.addStretch()
+        for widget in (lbl_samples, btn_sample_xrd, btn_sample_hplc, btn_sample_spec):
+            paste_btn_bar.removeWidget(widget)
+            widget.hide()
+        examples = QToolButton()
+        examples.setText("Try an example")
+        examples.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        examples_menu = QMenu(examples)
+        examples_menu.addAction("XRD scan", self._load_sample_xrd)
+        examples_menu.addAction("Instrument log", self._load_sample_hplc)
+        examples_menu.addAction("Spectrum", self._load_sample_spec)
+        examples.setMenu(examples_menu)
+        paste_btn_bar.insertWidget(1, examples)
         l_paste.addLayout(paste_btn_bar)
 
         self.txt_paste = QTextEdit()
@@ -171,18 +195,18 @@ class ImportDialog(QDialog):
         self.txt_paste.textChanged.connect(self._load_text_preview)
         l_paste.addWidget(self.txt_paste)
 
-        self.tabs_source.addTab(tab_paste, "📋 Paste Raw Text / Clipboard")
+        self.tabs_source.addTab(tab_paste, "Paste text")
         self.tabs_source.currentChanged.connect(self._on_source_tab_changed)
 
         main_layout.addWidget(self.tabs_source)
 
         # Ingestion & Parsing Settings
-        grp_settings = QGroupBox("Parsing & Ingestion Settings")
+        grp_settings = QGroupBox("Reading options")
         gl = QHBoxLayout(grp_settings)
         gl.setSpacing(10)
 
         # Delimiter
-        gl.addWidget(QLabel("Delimiter:"))
+        gl.addWidget(QLabel("Separate columns by:"))
         self.combo_delim = QComboBox()
         self.combo_delim.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.combo_delim.setMinimumContentsLength(8)
@@ -197,7 +221,7 @@ class ImportDialog(QDialog):
         gl.addSpacing(10)
 
         # Header Mode
-        gl.addWidget(QLabel("Header Mode:"))
+        gl.addWidget(QLabel("Column names:"))
         self.combo_header = QComboBox()
         self.combo_header.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.combo_header.setMinimumContentsLength(10)
@@ -268,11 +292,23 @@ class ImportDialog(QDialog):
 
         self.btn_ok = QPushButton("Import Data")
         self.btn_ok.setDefault(True)
-        self.btn_ok.setStyleSheet("font-weight: 700; background-color: #15803d; color: #ffffff; padding: 6px 18px; border-radius: 4px;")
+        self.btn_ok.setProperty("role","primary")
+        self.btn_ok.setStyleSheet("")
         self.btn_ok.clicked.connect(self._on_accept)
         buttons_layout.addWidget(self.btn_ok)
 
         main_layout.addLayout(buttons_layout)
+        from omnigraph.ui.dialogs.dialog_layout import fold_section, finish_dialog
+        grp_batch.layout().removeWidget(self.chk_auto_plot)
+        self.chk_auto_plot.setText("Create a graph after importing")
+        main_layout.insertWidget(1, self.chk_auto_plot)
+        self.parsing_toggle, self.parsing_options = fold_section(grp_settings, "Adjust how data is read")
+        self.destination_toggle, self.destination_options = fold_section(grp_batch, "Multiple-file and graph options")
+        hint = QLabel("Choose files or paste text. Check the preview, then import. Headers and numbers are detected automatically on your computer.")
+        hint.setWordWrap(True)
+        main_layout.insertWidget(0, hint)
+        self.btn_ok.setEnabled(False)
+        finish_dialog(self)
 
     def _browse_files(self):
         """Allows selecting one or multiple files in file dialog."""

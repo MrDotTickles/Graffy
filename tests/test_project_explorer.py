@@ -52,7 +52,7 @@ def test_explorer_flat_1level_structure(qapp):
     cat_graphs = tree.topLevelItem(1)
     cat_reports = tree.topLevelItem(2)
 
-    assert "DATA TABLES" in cat_data.text(0)
+    assert "WORKSHEETS" in cat_data.text(0)
     assert "(2)" in cat_data.text(0)
     assert cat_data.childCount() == 2
 
@@ -61,7 +61,7 @@ def test_explorer_flat_1level_structure(qapp):
     sheet2_item = cat_data.child(1)
     assert "Sheet1" in sheet1_item.text(0)
     assert "XRD_Scan" in sheet2_item.text(0)
-    assert "cols" in sheet2_item.text(0)
+    assert f"Columns ({ws2.column_count()})" in sheet2_item.toolTip(0)
     assert sheet2_item.childCount() == 0  # Flat leaf
 
     # Check graph category
@@ -70,11 +70,11 @@ def test_explorer_flat_1level_structure(qapp):
     assert cat_graphs.childCount() == 1
     graph_item = cat_graphs.child(0)
     assert "Diffraction_Pattern" in graph_item.text(0)
-    assert "1 curve" in graph_item.text(0)
+    assert "Curves (1)" in graph_item.toolTip(0)
     assert graph_item.childCount() == 0  # Flat leaf
 
     # Check reports category
-    assert "REPORTS" in cat_reports.text(0)
+    assert "RESULTS" in cat_reports.text(0)
     assert "(1)" in cat_reports.text(0)
     assert cat_reports.childCount() == 1
     report_item = cat_reports.child(0)
@@ -203,7 +203,7 @@ def test_explorer_project_header_and_project_switch(qapp, tmp_path):
     explorer = ProjectExplorerWidget(proj1)
 
     assert explorer.lbl_project_name.text() == "BatteryStudy"
-    assert "Unsaved" in explorer.lbl_project_status.text()
+    assert "Not saved to a file" in explorer.lbl_project_status.text()
 
     # Simulate saving project
     save_path = str(tmp_path / "BatteryStudy.kgraph")
@@ -217,7 +217,7 @@ def test_explorer_project_header_and_project_switch(qapp, tmp_path):
     explorer.set_project(proj2)
 
     assert explorer.lbl_project_name.text() == "KineticsStudy"
-    assert "Unsaved" in explorer.lbl_project_status.text()
+    assert "Not saved to a file" in explorer.lbl_project_status.text()
     # Tree now reflects proj2 items
     cat_graphs = explorer.tree.topLevelItem(1)
     assert "(1)" in cat_graphs.text(0)

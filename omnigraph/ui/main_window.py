@@ -11,10 +11,10 @@ from typing import Optional, Dict
 from PyQt6.QtWidgets import (
     QMainWindow, QTabWidget, QDockWidget, QToolBar, QToolButton,
     QMenu, QMessageBox, QFileDialog, QInputDialog, QLabel,
-    QStatusBar, QApplication
+    QStatusBar, QApplication, QWidget, QSizePolicy, QStackedWidget, QVBoxLayout, QPushButton
 )
-from PyQt6.QtCore import Qt, pyqtSlot
-from PyQt6.QtGui import QAction, QKeySequence, QIcon, QShortcut
+from PyQt6.QtCore import Qt, pyqtSlot, QSize
+from PyQt6.QtGui import QAction, QKeySequence, QIcon, QShortcut, QPalette, QColor
 
 from omnigraph.core.project import Project, GraphModel, CurveModel, ReportModel
 from omnigraph.core.worksheet import Workbook, Worksheet, Column, ColumnRole
@@ -29,6 +29,7 @@ from omnigraph.ui.dialogs import (
     QuickLabelsDialog, AIDataExtractorDialog
 )
 from omnigraph.ui.samples import SampleProjects
+from omnigraph.ui.styles.design import icon, refresh_icons
 from omnigraph.ui.styles.qss import DARK_THEME_QSS, LIGHT_THEME_QSS
 
 
@@ -48,7 +49,9 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle(f"Graffy - {self.project.name}")
         self.resize(1300, 850)
-        self.setMinimumSize(900, 650)
+        available = self.screen().availableGeometry()
+        self.setMinimumSize(min(800, max(320, available.width()-32)),
+                            min(600, max(240, available.height()-48)))
         self.setAcceptDrops(True)
 
         from omnigraph.ui.styles.app_icon import get_app_icon
@@ -57,6 +60,227 @@ class MainWindow(QMainWindow):
         self._init_ui()
         self._apply_theme(dark=False)
         self._populate_all_views()
+
+    def enable_guided_workspace(self):
+        """Progressively disclose advanced controls for ordinary app launches."""
+        if getattr(self, "_guided_workspace", False):
+            return
+        self._guided_workspace = True
+        self._remember_saved_state()
+        self.advanced_tools_action.setChecked(False)
+        for name in ("ToolbarFileData", "ToolbarPlotAnalysis"):
+            toolbar = self.findChild(QToolBar, name)
+            if toolbar:
+                toolbar.hide()
+        self.dock_properties.hide()
+        toolbar = QToolBar("Workspace", self)
+        toolbar.setObjectName("ToolbarQuickStart")
+        toolbar.setMovable(False)
+        toolbar.setMinimumWidth(0)
+        toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, toolbar)
+        self.quick_start_toolbar = toolbar
+        self.navigator_action = toolbar.addAction(icon("panel"), "Project panel")
+        self.navigator_action.setCheckable(True)
+        self.navigator_action.setChecked(self.dock_explorer.isVisible())
+        self.navigator_action.setToolTip("Show or hide project navigation")
+        self.navigator_action.triggered.connect(self._set_navigator_visible)
+        self.dock_explorer.visibilityChanged.connect(self.navigator_action.setChecked)
+        self.dock_explorer.toggleViewAction().triggered.connect(self._set_navigator_visible)
+        toolbar.widgetForAction(self.navigator_action).setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        brand = QLabel("graffy")
+        self.brand_label = brand
+        brand.setObjectName("Brand")
+        self.brand_action = toolbar.addWidget(brand)
+        self.data_workflow_button = QToolButton()
+        self.data_workflow_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.data_workflow_button.setText("Import data")
+        self.data_workflow_button.setIcon(icon("import"))
+        self.data_workflow_button.setToolTip("Import files or paste data")
+        self.data_workflow_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        data_menu = QMenu(self.data_workflow_button)
+        data_menu.addAction("Import Excel, CSV, or text...", self.import_data)
+        data_menu.addAction("Paste from clipboard", self._paste_guided_data)
+        data_menu.addSeparator()
+        data_menu.addAction("Open saved project...", self.open_project)
+        data_menu.addAction("New blank project", self.new_project)
+        data_menu.addAction("Try an example", lambda: self.load_sample("spectroscopy"))
+        self.data_workflow_button.setMenu(data_menu)
+        toolbar.addWidget(self.data_workflow_button)
+        self.chart_workflow_button = QToolButton()
+        self.chart_workflow_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.chart_workflow_button.setText("Create chart")
+        self.chart_workflow_button.setIcon(icon("chart"))
+        self.chart_workflow_button.setToolTip("Create a chart from worksheet data")
+        self.chart_workflow_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        chart_menu = QMenu(self.chart_workflow_button)
+        for text, kind in [("Scatter plot", "scatter"), ("Line plot", "line"),
+                           ("Line with symbols", "line_symbol"), ("Bar chart", "bar")]:
+            chart_menu.addAction(text, lambda checked=False, k=kind: self.create_plot(k))
+        self.chart_workflow_button.setMenu(chart_menu)
+        toolbar.addWidget(self.chart_workflow_button)
+        self.analyze_workflow_button = QToolButton()
+        self.analyze_workflow_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.analyze_workflow_button.setText("Analyze")
+        self.analyze_workflow_button.setIcon(icon("analyze"))
+        self.analyze_workflow_button.setToolTip("Fit curves, find peaks, and explore statistics")
+        self.analyze_workflow_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        analysis_menu = QMenu(self.analyze_workflow_button)
+        for text, callback in [("Fit a line", lambda: self.open_fit_wizard("linear")),
+                               ("Fit a curve", lambda: self.open_fit_wizard("gaussian")),
+                               ("Find peaks", self.open_peak_analysis_wizard),
+                               ("Statistics", self.open_statistics_dialog)]:
+            analysis_menu.addAction(text, callback)
+        self.analyze_workflow_button.setMenu(analysis_menu)
+        toolbar.addWidget(self.analyze_workflow_button)
+        toolbar.addSeparator()
+        self.act_undo.setIcon(icon("undo"))
+        self.act_redo.setIcon(icon("redo"))
+        self.workspace_undo_action = toolbar.addAction(icon("undo"),"Undo",self.undo_action)
+        self.workspace_redo_action = toolbar.addAction(icon("redo"),"Redo",self.redo_action)
+        for original,proxy in ((self.act_undo,self.workspace_undo_action),(self.act_redo,self.workspace_redo_action)):
+            proxy.setEnabled(original.isEnabled())
+            original.changed.connect(lambda original=original,proxy=proxy: proxy.setEnabled(original.isEnabled()))
+        for action in (self.workspace_undo_action, self.workspace_redo_action):
+            button = toolbar.widgetForAction(action)
+            button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        toolbar.addWidget(spacer)
+        self.workspace_save_action = toolbar.addAction(icon("save"), "Save project", self.save_project)
+        self.export_workflow_action = toolbar.addAction(icon("export", "#ffffff"), "Export graph", self.export_active_graph)
+        toolbar.widgetForAction(self.export_workflow_action).setProperty("role", "primary")
+        self.workspace_help_action = toolbar.addAction(icon("help"), "Getting started", self.show_getting_started)
+        toolbar.widgetForAction(toolbar.actions()[-1]).setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        toolbar.setIconSize(QSize(18,18))
+        for meta in self.tab_metadata.values():
+            if meta[0] == "sheet":
+                meta[3].enable_guided_sheet()
+        self._update_workflow_actions()
+        self._adapt_workspace_toolbar()
+
+    def _paste_guided_data(self):
+        sheet = self.get_active_spreadsheet_widget()
+        if sheet:
+            self.center_tabs.setCurrentWidget(sheet)
+            sheet.paste_selection()
+
+    def _update_workflow_actions(self):
+        if not hasattr(self, "chart_workflow_button"):
+            return
+        widget = self.center_tabs.currentWidget()
+        worksheet = widget.worksheet if isinstance(widget, SpreadsheetWidget) else None
+        graph = widget.graph_model if isinstance(widget, GraphViewWidget) else None
+        has_data = bool(worksheet and any(any(v is not None and str(v).strip() for v in c.data)
+                                          for c in worksheet.columns))
+        self.chart_workflow_button.setEnabled(has_data)
+        self.chart_workflow_button.setToolTip("Select worksheet columns to create a chart" if has_data else "Open a worksheet with data first")
+        self.analyze_workflow_button.setEnabled(has_data or bool(graph and graph.curves))
+        self.export_workflow_action.setEnabled(bool(graph and graph.curves))
+        if graph:
+            self.status_bar.showMessage("Your chart is ready. Edit chart to adjust appearance. Export graph to save or copy your figure.")
+        elif has_data:
+            self.status_bar.showMessage("Select columns, then Create chart. The X column supplies horizontal values.")
+        else:
+            self.status_bar.showMessage("Import a file, paste from Excel, or type into the worksheet to begin.")
+
+    def _project_snapshot(self):
+        import json
+        from omnigraph.core.project import NumpyEncoder
+        return json.dumps({"name": self.project.name,
+                           "workbooks": [item.to_dict() for item in self.project.workbooks],
+                           "graphs": [item.to_dict() for item in self.project.graphs],
+                           "reports": [item.to_dict() for item in self.project.reports]},
+                          sort_keys=True, cls=NumpyEncoder)
+
+    def _remember_saved_state(self):
+        self._saved_snapshot = self._project_snapshot()
+
+    def _confirm_pending_changes(self):
+        if not getattr(self, "_guided_workspace", False):
+            return True
+        if self._project_snapshot() == getattr(self, "_saved_snapshot", None):
+            return True
+        answer = QMessageBox.question(
+            self, "Save your work?", "This project has changes. Save them before continuing?",
+            QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save)
+        if answer == QMessageBox.StandardButton.Cancel:
+            return False
+        if answer == QMessageBox.StandardButton.Save:
+            self.save_project()
+            return self._project_snapshot() == getattr(self, "_saved_snapshot", None)
+        return True
+
+    def closeEvent(self, event):
+        if self._confirm_pending_changes():
+            super().closeEvent(event)
+        else:
+            event.ignore()
+
+    def show_getting_started(self):
+        from PyQt6.QtCore import QSettings
+        from omnigraph.ui.dialogs.welcome_dialog import WelcomeDialog
+        settings = QSettings("Graffy", "Graffy")
+        dialog = WelcomeDialog(self)
+        dialog.show_again.setChecked(settings.value("ui/show_welcome", True, type=bool))
+        dialog.exec()
+        settings.setValue("ui/show_welcome", dialog.show_again.isChecked())
+        if dialog.choice == "sample":
+            self.load_sample("spectroscopy")
+            self.center_tabs.setCurrentIndex(self.center_tabs.count() - 1)
+            self._remember_saved_state()
+        elif dialog.choice == "import":
+            self.import_data()
+        elif dialog.choice == "open":
+            self.open_project()
+        elif dialog.choice == "new":
+            self.new_project()
+
+    def set_advanced_tools_visible(self, visible):
+        for name in ("ToolbarFileData", "ToolbarPlotAnalysis"):
+            toolbar = self.findChild(QToolBar, name)
+            if toolbar:
+                toolbar.setVisible(visible)
+        self.dock_properties.setVisible(visible)
+
+    def _set_navigator_visible(self, visible):
+        self._navigator_user_choice = visible
+        self.dock_explorer.setVisible(visible)
+
+    def _adapt_workspace_toolbar(self):
+        if not hasattr(self,"workspace_save_action"):
+            return
+        compact = self.width() < 700
+        for button in (self.data_workflow_button,self.chart_workflow_button,self.analyze_workflow_button):
+            button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly if compact else Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        if self.width()<1000:
+            self.analyze_workflow_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.brand_action.setVisible(self.width()>=1000)
+        self.workspace_undo_action.setVisible(not compact)
+        self.workspace_redo_action.setVisible(not compact)
+        self.workspace_help_action.setVisible(not compact)
+        self.quick_start_toolbar.widgetForAction(self.workspace_save_action).setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonIconOnly if self.width()<1000 else Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.quick_start_toolbar.widgetForAction(self.export_workflow_action).setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonIconOnly if compact else Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._adapt_workspace_toolbar()
+        if getattr(self, "_guided_workspace", False):
+            visible = getattr(self, "_navigator_user_choice", self.width() >= 1000)
+            self.dock_explorer.setVisible(visible)
+            if hasattr(self, "navigator_action"):
+                self.navigator_action.setChecked(visible)
+
+    def _on_tabs_moved(self, *_):
+        # Metadata follows widgets, rather than stale positions after dragging tabs.
+        metadata = {id(value[3]): value for value in self.tab_metadata.values()}
+        self.tab_metadata = {i: metadata[id(self.center_tabs.widget(i))]
+                             for i in range(self.center_tabs.count())
+                             if id(self.center_tabs.widget(i)) in metadata}
+        self._on_tab_changed(self.center_tabs.currentIndex())
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -85,17 +309,42 @@ class MainWindow(QMainWindow):
 
         # 1. Central Workspace Tabs
         self.center_tabs = QTabWidget(self)
+        self.center_tabs.setObjectName("WorkspaceTabs")
+        self.center_tabs.setDocumentMode(True)
+        self.center_tabs.tabBar().setUsesScrollButtons(True)
         self.center_tabs.setTabsClosable(True)
         self.center_tabs.setMovable(True)
+        self.center_tabs.tabBar().tabMoved.connect(self._on_tabs_moved)
         self.center_tabs.setElideMode(Qt.TextElideMode.ElideRight)
         self.center_tabs.tabCloseRequested.connect(self._on_tab_close_requested)
         self.center_tabs.currentChanged.connect(self._on_tab_changed)
-        self.setCentralWidget(self.center_tabs)
+        self.workspace_stack=QStackedWidget()
+        self.workspace_stack.addWidget(self.center_tabs)
+        empty=QWidget()
+        empty_layout=QVBoxLayout(empty)
+        empty_layout.setContentsMargins(24,24,24,24)
+        empty_layout.addStretch()
+        title=QLabel("Your project is still here")
+        title.setProperty("role","heading")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_layout.addWidget(title)
+        hint=QLabel("Open a worksheet, graph, or result from the project panel to continue.")
+        hint.setWordWrap(True)
+        hint.setProperty("role","muted")
+        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_layout.addWidget(hint)
+        reveal=QPushButton("Open project panel")
+        reveal.clicked.connect(lambda: self._set_navigator_visible(True))
+        empty_layout.addWidget(reveal,0,Qt.AlignmentFlag.AlignCenter)
+        empty_layout.addStretch()
+        self.workspace_stack.addWidget(empty)
+        self.setCentralWidget(self.workspace_stack)
 
         # 2. Docks
         # Left Dock: Project Explorer
-        self.dock_explorer = QDockWidget("Project Explorer", self)
+        self.dock_explorer = QDockWidget("PROJECT", self)
         self.dock_explorer.setObjectName("DockProjectExplorer")
+        self.dock_explorer.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
         self.dock_explorer.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
         self.dock_explorer.setMinimumWidth(240)
         self.explorer_widget = ProjectExplorerWidget(self.project, self)
@@ -149,6 +398,12 @@ class MainWindow(QMainWindow):
 
         # 5. Toolbars (Ribbon)
         self._create_toolbars()
+        import re
+        for button in self.findChildren(QToolButton):
+            button.setText(re.sub(r"[\U0001f000-\U0001faff\u2600-\u27bf\ufe0f]", "", button.text()).strip())
+        for action in self.findChildren(QAction):
+            caption=re.sub(r"[\U0001f000-\U0001faff\u2600-\u27bf\ufe0f]", "", action.text()).strip()
+            action.setText(caption)
 
     def _add_action(self, menu: QMenu, text: str, slot, shortcut: Optional[str] = None) -> QAction:
         act = menu.addAction(text, slot)
@@ -169,7 +424,6 @@ class MainWindow(QMainWindow):
         self._add_action(menu_file, "Save Project As...", self.save_project_as)
         menu_file.addSeparator()
         self._add_action(menu_file, "Import Data (CSV, Excel)...", self.import_data, "Ctrl+I")
-        self._add_action(menu_file, "🤖 AI Smart Data Import & Plot...", self.open_ai_extractor_dialog, "Ctrl+Shift+I")
         self._add_action(menu_file, "Export Active Graph...", self.export_active_graph, "Ctrl+E")
         self._add_action(menu_file, "Copy Graph to Clipboard", self.copy_active_graph, "Ctrl+Shift+C")
         menu_file.addSeparator()
@@ -206,6 +460,7 @@ class MainWindow(QMainWindow):
 
         # --- Plot Menu ---
         menu_plot = menubar.addMenu("&Plot")
+        self._add_action(menu_plot, "Import data into a graph...", self.open_ai_extractor_dialog, "Ctrl+Shift+I")
         self._add_action(menu_plot, "Scatter Plot", lambda: self.create_plot("scatter"))
         self._add_action(menu_plot, "Line Plot", lambda: self.create_plot("line"))
         self._add_action(menu_plot, "Line + Symbol", lambda: self.create_plot("line_symbol"))
@@ -257,6 +512,10 @@ class MainWindow(QMainWindow):
         # --- View Menu ---
         menu_view = menubar.addMenu("&View")
         self._add_action(menu_view, "Toggle Dark / Light Theme", self.toggle_theme, "Ctrl+T")
+        self.advanced_tools_action = menu_view.addAction("Show advanced tools")
+        self.advanced_tools_action.setCheckable(True)
+        self.advanced_tools_action.setChecked(True)
+        self.advanced_tools_action.toggled.connect(self.set_advanced_tools_visible)
         menu_view.addSeparator()
         self.act_zoom_in = self._add_action(menu_view, "Zoom In", self.zoom_in, "Ctrl++")
         self.act_zoom_out = self._add_action(menu_view, "Zoom Out", self.zoom_out, "Ctrl+-")
@@ -273,6 +532,7 @@ class MainWindow(QMainWindow):
 
         # --- Help Menu ---
         menu_help = menubar.addMenu("&Help")
+        self._add_action(menu_help, "Getting started...", self.show_getting_started)
         self._add_action(menu_help, "Check for Updates...", self.open_update_dialog)
         menu_help.addSeparator()
         act_about = self._add_action(menu_help, "About Graffy", self._show_about)
@@ -305,7 +565,9 @@ class MainWindow(QMainWindow):
 
         lbl_step1 = QLabel(" 1. DATA ")
         lbl_step1.setObjectName("WorkflowBadge1")
-        lbl_step1.setStyleSheet("background-color: #0284c7; color: white; border-radius: 3px; font-weight: 700; font-size: 10px; padding: 2px 5px; margin-right: 4px;")
+        lbl_step1.setStyleSheet("")
+        lbl_step1.setText("DATA")
+        lbl_step1.setProperty("role","eyebrow")
         lbl_step1.setToolTip("Step 1: Project setup, file ingestion, and data column preparation")
         tb_data.addWidget(lbl_step1)
 
@@ -329,7 +591,7 @@ class MainWindow(QMainWindow):
         btn_import.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         i_menu = QMenu(btn_import)
         i_menu.addAction("Import Data File(s)... (CSV, Excel, TXT, DAT)", self.import_data)
-        i_menu.addAction("🤖 AI Smart Data Extractor & Plotter...", self.open_ai_extractor_dialog)
+        i_menu.addAction("Import data into a graph...", self.open_ai_extractor_dialog)
         i_menu.addSeparator()
         samples_sub = i_menu.addMenu("📚 Load Scientific Sample...")
         samples_sub.addAction("UV-Vis Spectroscopy (3 Peaks)", lambda: self.load_sample("spectroscopy"))
@@ -379,7 +641,9 @@ class MainWindow(QMainWindow):
 
         lbl_step2 = QLabel(" 2. PLOT ")
         lbl_step2.setObjectName("WorkflowBadge2")
-        lbl_step2.setStyleSheet("background-color: #2563eb; color: white; border-radius: 3px; font-weight: 700; font-size: 10px; padding: 2px 5px; margin-right: 4px;")
+        lbl_step2.setStyleSheet("")
+        lbl_step2.setText("PLOT")
+        lbl_step2.setProperty("role","eyebrow")
         lbl_step2.setToolTip("Step 2: Choose 2D plot type, biological replicate view, waterfall, or multi-panel figure")
         tb_plot.addWidget(lbl_step2)
 
@@ -439,7 +703,9 @@ class MainWindow(QMainWindow):
         tb_plot.addSeparator()
         lbl_step3 = QLabel(" 3. ANALYZE & STYLE ")
         lbl_step3.setObjectName("WorkflowBadge3")
-        lbl_step3.setStyleSheet("background-color: #7c3aed; color: white; border-radius: 3px; font-weight: 700; font-size: 10px; padding: 2px 5px; margin-left: 2px; margin-right: 4px;")
+        lbl_step3.setStyleSheet("")
+        lbl_step3.setText("ANALYZE")
+        lbl_step3.setProperty("role","eyebrow")
         lbl_step3.setToolTip("Step 3: Curve fitting, peak deconvolution, signal smoothing, and publication labeling")
         tb_plot.addWidget(lbl_step3)
 
@@ -471,7 +737,9 @@ class MainWindow(QMainWindow):
         tb_plot.addSeparator()
         lbl_step4 = QLabel(" 4. EXPORT ")
         lbl_step4.setObjectName("WorkflowBadge4")
-        lbl_step4.setStyleSheet("background-color: #059669; color: white; border-radius: 3px; font-weight: 700; font-size: 10px; padding: 2px 5px; margin-left: 2px; margin-right: 4px;")
+        lbl_step4.setStyleSheet("")
+        lbl_step4.setText("EXPORT")
+        lbl_step4.setProperty("role","eyebrow")
         lbl_step4.setToolTip("Step 4: Copy to clipboard or export high-resolution publication figures (PNG, PDF, SVG, TIFF)")
         tb_plot.addWidget(lbl_step4)
 
@@ -482,60 +750,60 @@ class MainWindow(QMainWindow):
     def _apply_theme(self, dark: bool):
         self.is_dark_theme = dark
         app = QApplication.instance()
-        if app is not None:
+        desired_theme = DARK_THEME_QSS if dark else LIGHT_THEME_QSS
+        if app is not None and (app.styleSheet() != desired_theme or getattr(app,"is_dark_theme",None) != dark):
             app.is_dark_theme = dark
+            palette = QPalette()
+            for role, value in ((QPalette.ColorRole.Window,"#151b29" if dark else "#f4f6fa"),
+                                (QPalette.ColorRole.Base,"#1d2535" if dark else "#ffffff"),
+                                (QPalette.ColorRole.Text,"#e6ebf5" if dark else "#202b40"),
+                                (QPalette.ColorRole.WindowText,"#e6ebf5" if dark else "#202b40"),
+                                (QPalette.ColorRole.Button,"#1d2535" if dark else "#ffffff"),
+                                (QPalette.ColorRole.ButtonText,"#e6ebf5" if dark else "#202b40"),
+                                (QPalette.ColorRole.Highlight,"#383759" if dark else "#e3e5ff"),
+                                (QPalette.ColorRole.HighlightedText,"#b0aaff" if dark else "#4f46e5")):
+                palette.setColor(role,QColor(value))
+            app.setPalette(palette)
             if dark:
                 app.setStyleSheet(DARK_THEME_QSS)
             else:
                 app.setStyleSheet(LIGHT_THEME_QSS)
+        if hasattr(self, "data_workflow_button"):
+            for button, name in ((self.data_workflow_button,"import"),
+                                 (self.chart_workflow_button,"chart"),
+                                 (self.analyze_workflow_button,"analyze")):
+                button.setIcon(icon(name))
+            self.act_undo.setIcon(icon("undo"))
+            self.act_redo.setIcon(icon("redo"))
+            self.navigator_action.setIcon(icon("panel"))
+        if hasattr(self, "explorer_widget"):
+            self.explorer_widget.populate_tree()
+        refresh_icons(self)
         if hasattr(self, "btn_theme_toggle"):
-            self.btn_theme_toggle.setText("☀️ Light Mode" if dark else "🌙 Dark Mode")
+            self.btn_theme_toggle.setText("Light mode" if dark else "Dark mode")
 
     def toggle_theme(self):
         self._apply_theme(not self.is_dark_theme)
 
     def _populate_all_views(self):
         """Populates tab workspace from Project workbooks, graphs, and reports."""
+        old_views=[self.center_tabs.widget(i) for i in range(self.center_tabs.count())]
         self.center_tabs.clear()
         self.tab_metadata.clear()
+        self._last_active_sheet_widget=None
+        for view in old_views:
+            view.hide()
+            if isinstance(view,GraphViewWidget):
+                view.editor_dialog.hide()
+            view.deleteLater()
 
-        # Add sheets
         for wb in self.project.workbooks:
             for sheet in wb.sheets:
-                sw = SpreadsheetWidget(sheet, self)
-                sw.request_plot.connect(self.create_plot)
-                sw.request_add_to_active_graph.connect(self.add_selected_columns_to_active_graph)
-                sw.data_modified.connect(self._on_sheet_data_modified)
-                sw.selection_changed.connect(self._on_sheet_selection_changed)
-                sw.request_jump_to_graph.connect(lambda g_title: self._on_explorer_item_activated("graph", g_title, ""))
-                sw.update_linked_graphs(self.project.graphs)
-                sw.undo_stack.canUndoChanged.connect(self._update_undo_redo_actions)
-                sw.undo_stack.canRedoChanged.connect(self._update_undo_redo_actions)
-                if hasattr(self, "zoom_level") and self.zoom_level != 1.0:
-                    sw.set_zoom(self.zoom_level)
-                idx = self.center_tabs.addTab(sw, f"📄 {sheet.name}")
-                self.tab_metadata[idx] = ("sheet", sheet.name, wb.name, sw)
-
-        # Add graphs
+                self._add_sheet_view(wb,sheet)
         for graph in self.project.graphs:
-            gw = GraphViewWidget(graph, self.project, self)
-            gw.coordinates_changed.connect(self._on_mouse_coords)
-            gw.request_curve_fit.connect(self.open_fit_wizard)
-            gw.labels_changed.connect(self._on_graph_labels_changed)
-            gw.curves_changed.connect(self._on_graph_curves_changed)
-            gw.request_jump_to_sheet.connect(lambda s, w: self._on_explorer_item_activated("sheet", s, w))
-            if hasattr(self, "zoom_level") and self.zoom_level != 1.0:
-                gw.set_zoom(self.zoom_level)
-            idx = self.center_tabs.addTab(gw, f"📈 {graph.title}")
-            self.tab_metadata[idx] = ("graph", graph.title, graph.id, gw)
-
-        # Add reports
-        for rep in self.project.reports:
-            rw = ReportViewWidget(rep, self)
-            if hasattr(self, "zoom_level") and self.zoom_level != 1.0:
-                rw.set_zoom(self.zoom_level)
-            idx = self.center_tabs.addTab(rw, f"📋 {rep.title}")
-            self.tab_metadata[idx] = ("report", rep.title, rep.id, rw)
+            self._add_graph_view(graph)
+        for report in self.project.reports:
+            self._add_report_view(report)
 
         self.explorer_widget.set_project(self.project)
         curr_idx = self.center_tabs.currentIndex()
@@ -543,8 +811,51 @@ class MainWindow(QMainWindow):
             c_type, c_id, _, _ = self.tab_metadata[curr_idx]
             self.explorer_widget.highlight_item(c_type, c_id)
         self._update_undo_redo_actions()
+        self._update_workflow_actions()
+
+    def _add_sheet_view(self, wb, sheet):
+        sw = SpreadsheetWidget(sheet, self)
+        if getattr(self, "_guided_workspace", False):
+            sw.enable_guided_sheet()
+        sw.request_plot.connect(self.create_plot)
+        sw.request_add_to_active_graph.connect(self.add_selected_columns_to_active_graph)
+        sw.data_modified.connect(self._on_sheet_data_modified)
+        sw.selection_changed.connect(self._on_sheet_selection_changed)
+        sw.request_jump_to_graph.connect(lambda g_title: self._on_explorer_item_activated("graph", g_title, ""))
+        sw.update_linked_graphs(self.project.graphs)
+        sw.undo_stack.canUndoChanged.connect(self._update_undo_redo_actions)
+        sw.undo_stack.canRedoChanged.connect(self._update_undo_redo_actions)
+        if hasattr(self, "zoom_level") and self.zoom_level != 1.0:
+            sw.set_zoom(self.zoom_level)
+        idx = self.center_tabs.addTab(sw, icon("sheet"), sheet.name)
+        self.tab_metadata[idx] = ("sheet", sheet.name, wb.name, sw)
+        return idx
+
+    def _add_graph_view(self, graph):
+        gw = GraphViewWidget(graph, self.project, self)
+        gw.coordinates_changed.connect(self._on_mouse_coords)
+        gw.request_curve_fit.connect(self.open_fit_wizard)
+        gw.labels_changed.connect(self._on_graph_labels_changed)
+        gw.curves_changed.connect(self._on_graph_curves_changed)
+        gw.request_jump_to_sheet.connect(lambda s, w: self._on_explorer_item_activated("sheet", s, w))
+        if hasattr(self, "zoom_level") and self.zoom_level != 1.0:
+            gw.set_zoom(self.zoom_level)
+        idx = self.center_tabs.addTab(gw, icon("chart"), graph.title)
+        self.tab_metadata[idx] = ("graph", graph.title, graph.id, gw)
+        return idx
+
+    def _add_report_view(self, rep):
+        rw = ReportViewWidget(rep, self)
+        if hasattr(self, "zoom_level") and self.zoom_level != 1.0:
+            rw.set_zoom(self.zoom_level)
+        idx = self.center_tabs.addTab(rw, icon("report"), rep.title)
+        self.tab_metadata[idx] = ("report", rep.title, rep.id, rw)
+        return idx
 
     def _on_tab_changed(self, index: int):
+        if hasattr(self,"workspace_stack"):
+            self.workspace_stack.setCurrentIndex(0 if self.center_tabs.count() else 1)
+        self._update_workflow_actions()
         if index < 0 or index not in self.tab_metadata:
             self._update_undo_redo_actions()
             return
@@ -574,29 +885,42 @@ class MainWindow(QMainWindow):
     def _on_tab_close_requested(self, index: int):
         if index not in self.tab_metadata:
             return
-
-        item_type, item_id, parent_id, _ = self.tab_metadata[index]
-        if item_type == "sheet":
-            wb = self.project.get_workbook(parent_id)
-            if wb and len(wb.sheets) <= 1:
-                QMessageBox.warning(self, "Warning", "Workbook must retain at least one worksheet.")
-                return
-            if wb:
-                wb.sheets = [s for s in wb.sheets if s.name != item_id]
-        elif item_type == "graph":
-            self.project.graphs = [g for g in self.project.graphs if g.title != item_id]
-        elif item_type == "report":
-            self.project.reports = [r for r in self.project.reports if r.title != item_id]
-
-        self._populate_all_views()
+        _,name,_,view=self.tab_metadata[index]
+        if getattr(self,"_last_active_sheet_widget",None) is view:
+            self._last_active_sheet_widget=None
+        if isinstance(view,GraphViewWidget):
+            view.editor_dialog.hide()
+        self.center_tabs.removeTab(index)
+        self.tab_metadata.pop(index,None)
+        self._on_tabs_moved()
+        view.deleteLater()
+        self.status_bar.showMessage(f"Closed {name}. Reopen it from the project panel.",4500)
 
     def _on_explorer_item_activated(self, item_type: str, item_id: str, parent_id: str):
-        # Find matching tab and switch to it
-        for tab_idx, meta in self.tab_metadata.items():
-            t_type, t_id, t_parent, _ = meta
-            if t_type == item_type and (t_id == item_id or (parent_id and t_parent == parent_id and t_id == item_id)):
+        for tab_idx,meta in self.tab_metadata.items():
+            if meta[0]==item_type and meta[1]==item_id and (item_type!="sheet" or not parent_id or meta[2]==parent_id):
                 self.center_tabs.setCurrentIndex(tab_idx)
                 return
+        index=None
+        if item_type=="sheet":
+            for wb in self.project.workbooks:
+                if parent_id and wb.name!=parent_id:
+                    continue
+                sheet=next((sheet for sheet in wb.sheets if sheet.name==item_id),None)
+                if sheet:
+                    index=self._add_sheet_view(wb,sheet)
+                    break
+        elif item_type=="graph":
+            graph=next((g for g in self.project.graphs if g.title==item_id or g.id==item_id),None)
+            if graph:
+                index=self._add_graph_view(graph)
+        elif item_type=="report":
+            report=next((r for r in self.project.reports if r.title==item_id or r.id==item_id),None)
+            if report:
+                index=self._add_report_view(report)
+        if index is not None:
+            self.center_tabs.setCurrentIndex(index)
+            self._on_tab_changed(index)
 
     # --- Project Explorer Context Action Handlers ---
 
@@ -825,6 +1149,7 @@ class MainWindow(QMainWindow):
         self.refresh_active_spreadsheet()
 
     def _on_sheet_data_modified(self):
+        self._update_workflow_actions()
         # Refresh any open graphs that reference this sheet
         for idx, meta in self.tab_metadata.items():
             if meta[0] == "graph":
@@ -835,7 +1160,7 @@ class MainWindow(QMainWindow):
         if gw:
             idx = self.center_tabs.currentIndex()
             if idx in self.tab_metadata and self.tab_metadata[idx][0] == "graph":
-                self.center_tabs.setTabText(idx, f"📈 {gw.graph_model.title}")
+                self.center_tabs.setTabText(idx, gw.graph_model.title)
                 self.tab_metadata[idx] = ("graph", gw.graph_model.title, gw.graph_model.id, gw)
             self.property_widget.set_active_graph(gw.graph_model)
             self.explorer_widget.set_project(self.project)
@@ -982,6 +1307,8 @@ class MainWindow(QMainWindow):
             self.menu_recent.addAction(f"&{i+1}. {name}", lambda p=path: self.open_recent_project(p))
 
     def open_recent_project(self, path: str):
+        if not self._confirm_pending_changes():
+            return
         if not os.path.exists(path):
             QMessageBox.warning(self, "File Not Found", f"Project file not found:\n{path}")
             self._update_recent_menu()
@@ -991,16 +1318,22 @@ class MainWindow(QMainWindow):
             self.setWindowTitle(f"Graffy - {self.project.name}")
             self._populate_all_views()
             self._add_recent_project(path)
+            self._remember_saved_state()
             self.status_bar.showMessage(f"Loaded project: {self.project.name}", 3500)
         except Exception as e:
             QMessageBox.critical(self, "Open Failed", str(e))
 
     def new_project(self):
+        if not self._confirm_pending_changes():
+            return
         self.project = Project.create_default("Untitled Project")
         self.setWindowTitle("Graffy - Untitled Project")
         self._populate_all_views()
+        self._remember_saved_state()
 
     def open_project(self):
+        if not self._confirm_pending_changes():
+            return
         path, _ = QFileDialog.getOpenFileName(self, "Open Graffy Project", "", "Graffy Project (*.kgraph);;All Files (*.*)")
         if path:
             try:
@@ -1008,6 +1341,7 @@ class MainWindow(QMainWindow):
                 self.setWindowTitle(f"Graffy - {self.project.name}")
                 self._populate_all_views()
                 self._add_recent_project(path)
+                self._remember_saved_state()
                 self.status_bar.showMessage(f"Loaded project: {self.project.name}", 3500)
             except Exception as e:
                 QMessageBox.critical(self, "Open Project Failed", f"Failed to load project file:\n{e}")
@@ -1018,6 +1352,7 @@ class MainWindow(QMainWindow):
         else:
             try:
                 self.project.save_to_file(self.project.filepath)
+                self._remember_saved_state()
                 self.explorer_widget.update_header()
                 self._add_recent_project(self.project.filepath)
                 self.status_bar.showMessage(f"Project saved to {self.project.filepath}", 3000)
@@ -1030,6 +1365,7 @@ class MainWindow(QMainWindow):
             try:
                 self.project.name = os.path.splitext(os.path.basename(path))[0]
                 self.project.save_to_file(path)
+                self._remember_saved_state()
                 self.setWindowTitle(f"Graffy - {self.project.name}")
                 self.explorer_widget.update_header()
                 self._add_recent_project(path)
@@ -1179,7 +1515,7 @@ class MainWindow(QMainWindow):
             elif dlg.created_worksheet:
                 wb_name = self.project.workbooks[0].name if self.project.workbooks else "Book1"
                 self._on_explorer_item_activated("sheet", dlg.created_worksheet.name, wb_name)
-            self.status_bar.showMessage("AI Data Extraction & Plotting Completed!", 4000)
+            self.status_bar.showMessage("Data imported into graph.", 4000)
 
     def export_active_graph(self):
         gw = self.get_active_graph_widget()
@@ -1208,6 +1544,7 @@ class MainWindow(QMainWindow):
         self._update_undo_redo_actions()
 
     def _on_sheet_selection_changed(self, col_indices: list):
+        self._update_workflow_actions()
         if not hasattr(self, "act_del_col"):
             return
         sw = self.get_active_spreadsheet_widget()
@@ -1789,6 +2126,8 @@ class MainWindow(QMainWindow):
             self._on_sheet_data_modified()
 
     def load_sample(self, sample_name: str):
+        if not self._confirm_pending_changes():
+            return
         if sample_name == "spectroscopy":
             self.project = SampleProjects.create_spectroscopy_sample()
         elif sample_name == "kinetics":
@@ -1804,6 +2143,7 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle(f"Graffy - {self.project.name}")
         self._populate_all_views()
+        self._remember_saved_state()
 
     def open_update_dialog(self):
         """Opens the software update checker dialog."""

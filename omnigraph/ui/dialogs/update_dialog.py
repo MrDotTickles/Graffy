@@ -11,7 +11,7 @@ from urllib.parse import urlparse, unquote
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTextEdit, QLineEdit, QCheckBox, QGroupBox, QProgressBar,
-    QMessageBox, QWidget
+    QMessageBox, QWidget, QApplication
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QUrl
 from PyQt6.QtGui import QDesktopServices
@@ -59,6 +59,13 @@ class UpdateDialog(QDialog):
         if auto_check:
             self.check_updates()
 
+    @staticmethod
+    def _readable_colors(text):
+        if not getattr(QApplication.instance(),"is_dark_theme",False):
+            for old,new in (("#94a3b8","#536177"),("#38bdf8","#075985"),("#22c55e","#166534"),("#ef4444","#b91c1c"),("#f59e0b","#92400e")):
+                text=text.replace(old,new)
+        return text
+
     def _build_ui(self):
         layout = QVBoxLayout(self)
         layout.setSpacing(14)
@@ -74,13 +81,13 @@ class UpdateDialog(QDialog):
         header_layout.addWidget(lbl_icon)
 
         title_layout = QVBoxLayout()
-        lbl_title = QLabel("<h2>Graffy Update Center</h2>")
-        lbl_title.setStyleSheet("margin: 0; padding: 0;")
+        lbl_title = QLabel("<h2>Software updates</h2>")
+        lbl_title.setStyleSheet(self._readable_colors("margin: 0; padding: 0;"))
         
         current_ver = getattr(omnigraph, "__version__", "1.0.0")
         self.lbl_current_ver = QLabel(f"Current Installed Version: <b>v{current_ver}</b>")
         self.lbl_status = QLabel("Ready to check for updates.")
-        self.lbl_status.setStyleSheet("color: #38bdf8; font-weight: bold;")
+        self.lbl_status.setStyleSheet(self._readable_colors("color: #38bdf8; font-weight: bold;"))
 
         title_layout.addWidget(lbl_title)
         title_layout.addWidget(self.lbl_current_ver)
@@ -97,12 +104,12 @@ class UpdateDialog(QDialog):
         prog_layout.setSpacing(4)
 
         self.lbl_download_progress = QLabel("Downloading update...")
-        self.lbl_download_progress.setStyleSheet("color: #38bdf8; font-size: 11px;")
+        self.lbl_download_progress.setStyleSheet(self._readable_colors("color: #38bdf8; font-size: 11px;"))
         prog_layout.addWidget(self.lbl_download_progress)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
-        self.progress_bar.setFixedHeight(8)
+        self.progress_bar.setFixedHeight(12)
         prog_layout.addWidget(self.progress_bar)
         
         self.progress_container.hide()
@@ -120,45 +127,20 @@ class UpdateDialog(QDialog):
         # 4. Action Banner (Download / Install buttons)
         self.action_layout = QHBoxLayout()
         
-        self.btn_download = QPushButton("⬇️ Download & Update Now")
+        self.btn_download = QPushButton("Download update")
         self.btn_download.setObjectName("PrimaryActionButton")
-        self.btn_download.setStyleSheet("""
-            QPushButton#PrimaryActionButton {
-                background-color: #22c55e;
-                color: #ffffff;
-                font-weight: bold;
-                font-size: 13px;
-                padding: 8px 18px;
-                border-radius: 6px;
-            }
-            QPushButton#PrimaryActionButton:hover {
-                background-color: #16a34a;
-            }
-        """)
+        self.btn_download.setProperty("role","primary")
         self.btn_download.clicked.connect(self._on_download_clicked)
         self.btn_download.hide()
         self.action_layout.addWidget(self.btn_download)
 
-        self.btn_open_file = QPushButton("🚀 Launch / Install Update")
-        self.btn_open_file.setStyleSheet("""
-            QPushButton {
-                background-color: #38bdf8;
-                color: #0f172a;
-                font-weight: bold;
-                font-size: 13px;
-                padding: 8px 18px;
-                border-radius: 6px;
-            }
-            QPushButton:hover {
-                background-color: #0284c7;
-                color: #ffffff;
-            }
-        """)
+        self.btn_open_file = QPushButton("Open update package")
+        self.btn_open_file.setProperty("role","primary")
         self.btn_open_file.clicked.connect(self._on_open_downloaded_file)
         self.btn_open_file.hide()
         self.action_layout.addWidget(self.btn_open_file)
 
-        self.btn_browser_fallback = QPushButton("🌐 View on Web")
+        self.btn_browser_fallback = QPushButton("View release")
         self.btn_browser_fallback.clicked.connect(self._on_browser_fallback_clicked)
         self.btn_browser_fallback.hide()
         self.action_layout.addWidget(self.btn_browser_fallback)
@@ -175,7 +157,7 @@ class UpdateDialog(QDialog):
             "Enter your <b>GitHub Repository</b> (e.g. <code>kyle/graffy</code>) "
             "or a custom Google Drive / server URL:"
         )
-        lbl_desc.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        lbl_desc.setStyleSheet(self._readable_colors("color: #94a3b8; font-size: 11px;"))
         config_layout.addWidget(lbl_desc)
 
         url_row = QHBoxLayout()
@@ -198,7 +180,7 @@ class UpdateDialog(QDialog):
 
         # 6. Bottom Controls
         bottom_layout = QHBoxLayout()
-        self.btn_toggle_config = QPushButton("⚙️ Source Settings")
+        self.btn_toggle_config = QPushButton("Settings")
         self.btn_toggle_config.setCheckable(True)
         self.btn_toggle_config.setChecked(False)
         self.group_config.setVisible(False)
@@ -207,7 +189,7 @@ class UpdateDialog(QDialog):
 
         bottom_layout.addStretch()
 
-        self.btn_check_again = QPushButton("🔄 Check Again")
+        self.btn_check_again = QPushButton("Check again")
         self.btn_check_again.clicked.connect(self.check_updates)
         bottom_layout.addWidget(self.btn_check_again)
 
@@ -216,6 +198,8 @@ class UpdateDialog(QDialog):
         bottom_layout.addWidget(self.btn_close)
 
         layout.addLayout(bottom_layout)
+        from omnigraph.ui.dialogs.dialog_layout import finish_dialog
+        finish_dialog(self)
 
     def check_updates(self):
         """Starts asynchronous update check."""
@@ -224,20 +208,20 @@ class UpdateDialog(QDialog):
         url = self.override_url or self.txt_url.text().strip()
         if not url:
             self.lbl_status.setText("No update source configured.")
-            self.lbl_status.setStyleSheet("color: #f59e0b; font-weight: bold;")
+            self.lbl_status.setStyleSheet(self._readable_colors("color: #f59e0b; font-weight: bold;"))
             self.txt_notes.setHtml(
-                "<p style='color: #94a3b8; font-size: 12px;'>"
+                self._readable_colors("<p style='color: #94a3b8; font-size: 12px;'>"
                 "To enable automatic updates, enter your GitHub repository slug (e.g. <b>username/graffy</b>) "
                 "or your cloud manifest URL.<br><br>"
-                "Click <b>⚙️ Source Settings</b> below to configure your update source."
-                "</p>"
+                "Click <b>Settings</b> below to configure your update source."
+                "</p>")
             )
             self.group_config.setVisible(True)
             self.btn_toggle_config.setChecked(True)
             return
 
         self.lbl_status.setText("Checking for updates...")
-        self.lbl_status.setStyleSheet("color: #38bdf8; font-weight: bold;")
+        self.lbl_status.setStyleSheet(self._readable_colors("color: #38bdf8; font-weight: bold;"))
         self.progress_bar.setRange(0, 0)
         self.lbl_download_progress.setText("Querying update server...")
         self.progress_container.show()
@@ -263,16 +247,16 @@ class UpdateDialog(QDialog):
 
         if info.error:
             self.lbl_status.setText("Update check failed")
-            self.lbl_status.setStyleSheet("color: #ef4444; font-weight: bold;")
+            self.lbl_status.setStyleSheet(self._readable_colors("color: #ef4444; font-weight: bold;"))
             self.txt_notes.setHtml(
-                f"<p style='color: #ef4444;'><b>Error:</b> {escape(info.error)}</p>"
-                "<p style='color: #94a3b8; font-size: 11px;'>Please verify your GitHub repository name or network connection.</p>"
+                self._readable_colors(f"<p style='color: #ef4444;'><b>Error:</b> {escape(info.error)}</p>"
+                "<p style='color: #94a3b8; font-size: 11px;'>Please verify your GitHub repository name or network connection.</p>")
             )
             return
 
         if info.is_newer:
             self.lbl_status.setText(f"🎉 New version available: v{info.latest_version}!")
-            self.lbl_status.setStyleSheet("color: #22c55e; font-weight: bold;")
+            self.lbl_status.setStyleSheet(self._readable_colors("color: #22c55e; font-weight: bold;"))
             
             html_body = f"""
             <div style="font-family: sans-serif; padding: 4px;">
@@ -283,10 +267,10 @@ class UpdateDialog(QDialog):
                 </div>
             </div>
             """
-            self.txt_notes.setHtml(html_body)
+            self.txt_notes.setHtml(self._readable_colors(html_body))
 
             if info.download_url:
-                self.btn_download.setText(f"⬇️ Download v{info.latest_version}")
+                self.btn_download.setText(f"Download v{info.latest_version}")
                 self.btn_download.show()
             else:
                 self.btn_download.hide()
@@ -297,13 +281,13 @@ class UpdateDialog(QDialog):
                 self.txt_notes.append("No compatible download is available for this computer. View the release on the web.")
         else:
             self.lbl_status.setText(f"✓ Graffy is up to date (v{info.current_version})")
-            self.lbl_status.setStyleSheet("color: #22c55e; font-weight: bold;")
+            self.lbl_status.setStyleSheet(self._readable_colors("color: #22c55e; font-weight: bold;"))
             self.txt_notes.setHtml(
-                f"<div style='text-align: center; padding: 30px; color: #94a3b8;'>"
+                self._readable_colors(f"<div style='text-align: center; padding: 30px; color: #94a3b8;'>"
                 f"<h3 style='color: #38bdf8;'>You have the latest version of Graffy</h3>"
                 f"<p>Installed version: <b>v{info.current_version}</b></p>"
                 f"<p style='font-size: 11px;'>No new updates are available at this time.</p>"
-                f"</div>"
+                f"</div>")
             )
             self.btn_download.hide()
             self.btn_open_file.hide()
@@ -365,10 +349,10 @@ class UpdateDialog(QDialog):
         self.downloaded_file_path = file_path
         self.progress_container.hide()
         self.btn_download.hide()
-        self.btn_open_file.setText(f"🚀 Open {os.path.basename(file_path)}")
+        self.btn_open_file.setText("Open update package")
         self.btn_open_file.show()
         self.lbl_status.setText("✓ Download complete! Ready to install.")
-        self.lbl_status.setStyleSheet("color: #22c55e; font-weight: bold;")
+        self.lbl_status.setStyleSheet(self._readable_colors("color: #22c55e; font-weight: bold;"))
 
         # Automatically launch or prompt to open
         reply = QMessageBox.question(
@@ -389,9 +373,9 @@ class UpdateDialog(QDialog):
         """Handles download failure and provides browser fallback."""
         self.progress_container.hide()
         self.btn_download.setEnabled(True)
-        self.btn_download.setText("⬇️ Retry Download")
+        self.btn_download.setText("Retry download")
         self.lbl_status.setText("Download failed")
-        self.lbl_status.setStyleSheet("color: #ef4444; font-weight: bold;")
+        self.lbl_status.setStyleSheet(self._readable_colors("color: #ef4444; font-weight: bold;"))
         
         QMessageBox.warning(
             self,

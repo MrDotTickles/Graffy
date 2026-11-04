@@ -218,7 +218,10 @@ class OmniCanvas(QWidget):
         """Opens Key & Legend Editor modal to quickly rename series labels and styling."""
         from omnigraph.ui.dialogs.legend_dialog import LegendEditorDialog
         try:
-            dlg = LegendEditorDialog(self.graph_model, parent=self, on_apply_callback=self.refresh)
+            def apply_legend():
+                self.refresh()
+                self.labels_changed.emit()
+            dlg = LegendEditorDialog(self.graph_model, parent=self, on_apply_callback=apply_legend, project=self.project)
             if dlg.exec():
                 self.refresh()
                 self.labels_changed.emit()

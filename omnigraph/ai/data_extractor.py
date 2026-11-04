@@ -1,6 +1,6 @@
 """
-Smart AI Data Extractor for Graffy.
-Intelligently ingests ANY file (TXT, CSV, DAT, LOG, TSV, Excel, JSON, raw dumps),
+Local rule-based data extractor for Graffy.
+Reads supported table and instrument formats (TXT, CSV, DAT, LOG, TSV, Excel, JSON, raw dumps),
 detects headers, units, metadata skip lines, delimiters, and automatically infers
 column roles (X, Y, Y Error) and recommends the optimal scientific plot type.
 """
@@ -17,7 +17,7 @@ from omnigraph.core.worksheet import Worksheet, Column, ColumnRole
 
 
 class ExtractionResult:
-    """Encapsulates the result of AI / smart data extraction."""
+    """Encapsulates parsed data and inferred column metadata."""
 
     def __init__(
         self,
@@ -66,7 +66,7 @@ class ExtractionResult:
 
 
 class SmartDataExtractor:
-    """Universal AI / heuristic data extraction engine."""
+    """Local heuristic parser; no model, API, or network request is used."""
 
     # Keywords commonly indicating independent variable (X)
     X_KEYWORDS = [

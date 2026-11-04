@@ -37,6 +37,7 @@ class SmoothDialog(QDialog):
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         content_widget = QWidget()
         form = QFormLayout(content_widget)
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
 
         # Columns
@@ -97,6 +98,10 @@ class SmoothDialog(QDialog):
         buttons.accepted.connect(self._on_accept)
         buttons.rejected.connect(self.reject)
         main_layout.addWidget(buttons)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Apply processing")
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setProperty("role","primary")
+        from omnigraph.ui.dialogs.dialog_layout import finish_dialog
+        finish_dialog(self,scroll_body=False)
 
         self._on_method_changed()
 

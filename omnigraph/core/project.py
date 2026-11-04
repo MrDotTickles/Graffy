@@ -216,6 +216,11 @@ class GraphModel:
         self.legend_location: str = "best"
         self.legend_frame: bool = True
         self.legend_font_size: int = 10
+        self.plot_axis_settings: Dict[str, Dict[str, str]] = {}
+        self.legend_text_color: str = "auto"
+        self.legend_face_color: str = "auto"
+        self.legend_edge_color: str = "auto"
+        self.legend_frame_alpha: float = 0.9
 
         # Theme
         self.theme: str = "Origin Classic"  # Origin Classic, Nature, Science, Modern Dark, Prism, High-Contrast
@@ -317,6 +322,11 @@ class GraphModel:
             "legend_location": self.legend_location,
             "legend_frame": self.legend_frame,
             "legend_font_size": self.legend_font_size,
+            "plot_axis_settings": self.plot_axis_settings,
+            "legend_text_color": self.legend_text_color,
+            "legend_face_color": self.legend_face_color,
+            "legend_edge_color": self.legend_edge_color,
+            "legend_frame_alpha": self.legend_frame_alpha,
             "theme": self.theme,
             "waterfall_enabled": self.waterfall_enabled,
             "waterfall_offset_mode": self.waterfall_offset_mode,
@@ -365,6 +375,11 @@ class GraphModel:
         g.legend_location = d.get("legend_location", "best")
         g.legend_frame = d.get("legend_frame", True)
         g.legend_font_size = d.get("legend_font_size", 10)
+        g.plot_axis_settings = d.get("plot_axis_settings", {})
+        g.legend_text_color = d.get("legend_text_color", "auto")
+        g.legend_face_color = d.get("legend_face_color", "auto")
+        g.legend_edge_color = d.get("legend_edge_color", "auto")
+        g.legend_frame_alpha = d.get("legend_frame_alpha", 0.9)
         g.theme = d.get("theme", "Origin Classic")
         g.waterfall_enabled = d.get("waterfall_enabled", False)
         g.waterfall_offset_mode = d.get("waterfall_offset_mode", "uniform")

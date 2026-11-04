@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QLineEdit, QGroupBox,
     QDialogButtonBox, QLabel, QScrollArea, QWidget
 )
+from omnigraph.ui.dialogs.dialog_layout import finish_dialog
 from omnigraph.core.project import GraphModel
 
 
@@ -17,7 +18,7 @@ class QuickLabelsDialog(QDialog):
     def __init__(self, graph: GraphModel, parent=None):
         super().__init__(parent)
         self.graph = graph
-        self.setWindowTitle(f"Edit Labels & Titles - {graph.title}")
+        self.setWindowTitle(f"Labels for {graph.title}")
         self.resize(460, 400)
         self.setMinimumSize(400, 320)
         self._init_ui()
@@ -75,9 +76,13 @@ class QuickLabelsDialog(QDialog):
 
         # Buttons
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Save labels")
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setDefault(True)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setProperty("role","primary")
         buttons.accepted.connect(self._on_accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+        finish_dialog(self)
 
     def _on_accept(self):
         self.graph.title_text = self.txt_title.text().strip()

@@ -54,6 +54,10 @@ class PeakAnalysisDialog(QDialog):
         left_widget = QWidget()
         left_widget.setMinimumWidth(280)
         left_widget.setMaximumWidth(320)
+        if self.screen().availableGeometry().width()<760:
+            content_layout.setDirection(QHBoxLayout.Direction.TopToBottom)
+            left_widget.setMinimumWidth(0)
+            left_widget.setMaximumWidth(16777215)
         left_layout = QVBoxLayout(left_widget)
         left_layout.setSpacing(8)
         left_layout.setContentsMargins(0, 0, 0, 0)
@@ -137,11 +141,8 @@ class PeakAnalysisDialog(QDialog):
         left_layout.addWidget(grp_actions)
 
         # Detect button (prominent in control column)
-        btn_search = QPushButton("🔍 Detect Peaks & Integrate")
-        btn_search.setStyleSheet(
-            "QPushButton { padding: 6px 14px; font-weight: bold; background: #0284c7; color: white; border-radius: 4px; } "
-            "QPushButton:hover { background: #0369a1; }"
-        )
+        btn_search = QPushButton("Find peaks and integrate")
+        btn_search.setProperty("role","primary")
         btn_search.clicked.connect(self._run_peak_search)
         left_layout.addWidget(btn_search)
         left_layout.addStretch()
@@ -175,6 +176,10 @@ class PeakAnalysisDialog(QDialog):
         buttons.accepted.connect(self._on_accept)
         buttons.rejected.connect(self.reject)
         main_layout.addWidget(buttons)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Add peak results")
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setProperty("role","primary")
+        from omnigraph.ui.dialogs.dialog_layout import finish_dialog
+        finish_dialog(self,scroll_body=False)
 
         self.combo_x_col.currentIndexChanged.connect(self._clear_cached_result)
         self.combo_y_col.currentIndexChanged.connect(self._clear_cached_result)

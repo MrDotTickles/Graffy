@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QColor
 
+from omnigraph.ui.dialogs.dialog_layout import fold_section, finish_dialog
 from omnigraph.core.project import Project, GraphModel, CurveModel
 from omnigraph.core.worksheet import ColumnRole
 
@@ -26,7 +27,7 @@ class AddCurveDialog(QDialog):
         self.active_graph = active_graph
         self.selected_color = "auto"
 
-        self.setWindowTitle(f"Layer Curve onto {active_graph.title}")
+        self.setWindowTitle(f"Add data to {active_graph.title}")
         self.resize(520, 480)
         self.setMinimumSize(420, 360)
         self._init_ui()
@@ -77,11 +78,11 @@ class AddCurveDialog(QDialog):
         layout.addWidget(grp_src)
 
         # 2. Layer & Style
-        grp_style = QGroupBox("Layer & Styling")
+        grp_style = QGroupBox("Data series")
         fl_style = QFormLayout(grp_style)
 
         self.txt_label = QLineEdit("Series")
-        fl_style.addRow("Legend Label:", self.txt_label)
+        fl_style.addRow("Series name:", self.txt_label)
 
         self.combo_plot_type = QComboBox()
         self.combo_plot_type.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
@@ -91,48 +92,60 @@ class AddCurveDialog(QDialog):
         self.combo_plot_type.setCurrentText("line_symbol")
         fl_style.addRow("Plot Type:", self.combo_plot_type)
 
+        grp_advanced = QGroupBox("Appearance")
+        fl_advanced = QFormLayout(grp_advanced)
+        fl_advanced.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         self.combo_axis = QComboBox()
         self.combo_axis.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        self.combo_axis.addItem("Primary Axis (Left Y)", "primary")
-        self.combo_axis.addItem("Secondary Axis (Right Y / Twin-X)", "secondary")
-        self.combo_axis.addItem("Stacked Panel (Bottom Layer)", "bottom_panel")
-        fl_style.addRow("Layer Assignment:", self.combo_axis)
+        self.combo_axis.addItem("Left vertical axis", "primary")
+        self.combo_axis.addItem("Right vertical axis", "secondary")
+        self.combo_axis.addItem("Separate lower panel", "bottom_panel")
+        fl_advanced.addRow("Axes:", self.combo_axis)
 
         # Color picker
         color_layout = QHBoxLayout()
         self.btn_color = QPushButton("Auto Palette Color")
         self.btn_color.clicked.connect(self._pick_color)
         color_layout.addWidget(self.btn_color)
-        fl_style.addRow("Color:", color_layout)
+        fl_advanced.addRow("Color:", color_layout)
 
         # Marker (conditionally shown if plot type has symbols)
         self.lbl_marker = QLabel("Marker:")
         self.combo_marker = QComboBox()
         self.combo_marker.addItems(["o (Circle)", "s (Square)", "^ (Triangle Up)", "v (Triangle Down)", "D (Diamond)", "* (Star)", "+ (Plus)", "x (Cross)", "none"])
-        fl_style.addRow(self.lbl_marker, self.combo_marker)
+        fl_advanced.addRow(self.lbl_marker, self.combo_marker)
 
         # Line style (conditionally shown if plot type has lines)
         self.lbl_line_style = QLabel("Line Style:")
         self.combo_line_style = QComboBox()
         self.combo_line_style.addItems(["- (Solid)", "-- (Dashed)", "-. (Dash-Dot)", ": (Dotted)", "none"])
-        fl_style.addRow(self.lbl_line_style, self.combo_line_style)
+        fl_advanced.addRow(self.lbl_line_style, self.combo_line_style)
 
         self.combo_plot_type.currentTextChanged.connect(self._update_symbol_visibility)
         self._update_symbol_visibility()
 
         layout.addWidget(grp_style)
+        layout.addWidget(grp_advanced)
+        self.appearance_toggle, _ = fold_section(grp_advanced, "Axis and appearance options")
 
         scroll.setWidget(content_widget)
         main_layout.addWidget(scroll, 1)
 
         # Buttons
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Add Layer to Graph")
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Add series")
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setDefault(True)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setProperty("role","primary")
         buttons.accepted.connect(self._on_accept)
         buttons.rejected.connect(self.reject)
         main_layout.addWidget(buttons)
 
         self._populate_columns()
+        finish_dialog(self, scroll_body=False)
+        self.btn_color.setAutoDefault(False)
+        self.btn_color.setDefault(False)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setDefault(True)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setProperty("role","primary")
 
     def _update_symbol_visibility(self):
         """Conditionally shows/hides features based on whether plot type uses lines or symbols."""
