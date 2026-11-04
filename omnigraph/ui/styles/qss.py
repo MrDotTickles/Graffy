@@ -117,3 +117,9 @@ QProgressBar::chunk { background: @accent; border-radius: 3px; }
 
 LIGHT_THEME_QSS = _theme()
 DARK_THEME_QSS = _theme(True)
+
+
+def scaled_stylesheet(stylesheet, scale):
+    """Scale shared interface geometry from its original values each time."""
+    import re
+    return re.sub(r"(\d+(?:\.\d+)?)px", lambda match: f"{max(1,round(float(match.group(1))*scale))}px", stylesheet)

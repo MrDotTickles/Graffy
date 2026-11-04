@@ -26,8 +26,8 @@ def test_chart_editor_collapses_without_losing_label_edits(app,width):
     if width >= 950:
         assert widget.canvas_widget.width()<collapsed.width()
     else:
-        assert widget.editor_dialog.isVisible()
-        assert widget.canvas_widget.height()>=collapsed.height()-2
+        assert not widget.editor_dialog.isVisible()
+        assert widget.canvas_widget.height()>80
     widget.txt_quick_title.setText("A clear title")
     widget._on_quick_label_edited()
     widget.edit_chart_button.setChecked(False)

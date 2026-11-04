@@ -8,7 +8,7 @@ import numpy as np
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QToolBar, QToolButton,
     QComboBox, QLabel, QMenu, QInputDialog, QMessageBox, QFileDialog, QToolTip,
-    QLineEdit, QScrollArea, QSizePolicy, QSplitter, QFormLayout, QPushButton, QTabWidget, QDialog, QCheckBox
+    QLineEdit, QScrollArea, QSizePolicy, QSplitter, QFormLayout, QPushButton, QTabWidget, QDialog, QCheckBox, QDoubleSpinBox
 )
 from PyQt6.QtCore import pyqtSignal, Qt, QPoint, QRect
 from PyQt6.QtGui import QAction, QIcon, QKeySequence, QShortcut
@@ -314,6 +314,7 @@ class GraphViewWidget(QWidget):
 
         self.chart_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.chart_splitter.setChildrenCollapsible(False)
+        self.canvas_widget.setMinimumHeight(160)
         self.chart_splitter.addWidget(self.canvas_widget)
         content = QWidget()
         content.setObjectName("ChartEditorBody")
@@ -359,6 +360,28 @@ class GraphViewWidget(QWidget):
         self.show_grid_checkbox.setChecked(self.graph_model.show_grid_major)
         self.show_grid_checkbox.toggled.connect(self._on_grid_toggled)
         style_layout.addWidget(self.show_grid_checkbox)
+        self.waterfall_checkbox=QCheckBox("Stack spectra (waterfall)")
+        self.waterfall_checkbox.toggled.connect(self._set_waterfall_enabled)
+        style_layout.addWidget(self.waterfall_checkbox)
+        self.waterfall_controls=QWidget()
+        wf=QFormLayout(self.waterfall_controls)
+        wf.setContentsMargins(0,0,0,0)
+        wf.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
+        self.waterfall_axis_checkbox=QCheckBox("Show intensity axis")
+        self.waterfall_axis_checkbox.toggled.connect(self._set_waterfall_axis)
+        self.waterfall_axis_checkbox.setToolTip("Values include the vertical offset added to each spectrum")
+        wf.addRow(self.waterfall_axis_checkbox)
+        self.waterfall_spacing=QDoubleSpinBox()
+        self.waterfall_spacing.setRange(0,1e9)
+        self.waterfall_spacing.setDecimals(4)
+        self.waterfall_spacing.setSpecialValueText("Automatic")
+        self.waterfall_spacing.valueChanged.connect(self._set_waterfall_step)
+        wf.addRow("Vertical spacing",self.waterfall_spacing)
+        note=QLabel("Spectra are shifted vertically for clarity. Offset values are not absolute intensity measurements.")
+        note.setWordWrap(True)
+        note.setProperty("role","muted")
+        wf.addRow(note)
+        style_layout.addWidget(self.waterfall_controls)
         style_layout.addWidget(self.legend_menu_button)
         style_layout.addWidget(self.annotation_menu_button)
         style_layout.addStretch()
@@ -409,24 +432,17 @@ class GraphViewWidget(QWidget):
             self.chart_settings.hide()
             self.editor_dialog.hide()
             return
-        wide = self.width() >= 950
+        orientation=Qt.Orientation.Horizontal if self.width()>=950 else Qt.Orientation.Vertical
+        changed=self.chart_splitter.orientation()!=orientation or not self.chart_settings.isVisible()
+        self.chart_splitter.setOrientation(orientation)
+        self.editor_dialog.hide()
+        self.chart_settings.setMaximumWidth(380 if orientation==Qt.Orientation.Horizontal else 16777215)
         self.chart_settings.setMaximumHeight(16777215)
-        self.chart_settings.setMaximumWidth(340 if wide else 16777215)
-        if wide:
-            self.editor_dialog.hide()
-            if self.chart_settings.parentWidget() is not self.chart_splitter:
-                self.chart_splitter.addWidget(self.chart_settings)
-            self.chart_settings.show()
-            self.chart_splitter.setSizes([max(300,self.width()-320),320])
-        else:
-            # Preserve a usable figure on smaller displays. The editor becomes
-            # a separate scrollable window with its Done button always visible.
-            if self.chart_settings.parentWidget() is not self.editor_dialog:
-                self.editor_dialog.layout().insertWidget(0,self.chart_settings,1)
-            self.chart_settings.show()
-            available=self.screen().availableGeometry()
-            self.editor_dialog.resize(min(410,available.width()-32),min(650,available.height()-48))
-            self.editor_dialog.show()
+        self.chart_settings.show()
+        if changed:
+            extent=self.width() if orientation==Qt.Orientation.Horizontal else self.height()
+            editor_size=min(350,max(120,int(extent*.43)))
+            self.chart_splitter.setSizes([max(100,extent-editor_size),editor_size])
 
     def resizeEvent(self,event):
         super().resizeEvent(event)
@@ -589,6 +605,15 @@ class GraphViewWidget(QWidget):
             self.txt_quick_y_bottom.setText(self.graph_model.y_bottom_title or "")
         if hasattr(self,"series_editor"):
             self.series_editor.sync()
+        if hasattr(self,"waterfall_checkbox"):
+            for control,value in ((self.waterfall_checkbox,self.graph_model.waterfall_enabled),(self.waterfall_axis_checkbox,self.graph_model.waterfall_show_y_axis)):
+                control.blockSignals(True)
+                control.setChecked(value)
+                control.blockSignals(False)
+            self.waterfall_spacing.blockSignals(True)
+            self.waterfall_spacing.setValue(self.graph_model.waterfall_y_step)
+            self.waterfall_spacing.blockSignals(False)
+            self.waterfall_controls.setVisible(self.graph_model.waterfall_enabled)
         if hasattr(self,"show_grid_checkbox"):
             self.show_grid_checkbox.blockSignals(True)
             self.show_grid_checkbox.setChecked(self.graph_model.show_grid_major)
@@ -723,6 +748,16 @@ class GraphViewWidget(QWidget):
         from omnigraph.ui.dialogs.export_dialog import ExportDialog
         dlg = ExportDialog(self.canvas_widget.plot_manager, self)
         dlg.exec()
+
+    def _set_waterfall_enabled(self,enabled):
+        self.graph_model.waterfall_enabled=enabled
+        self.refresh_plot()
+        self.labels_changed.emit()
+
+    def _set_waterfall_axis(self,enabled):
+        self.graph_model.waterfall_show_y_axis=enabled
+        self.refresh_plot()
+        self.labels_changed.emit()
 
     def _toggle_waterfall(self):
         self.graph_model.waterfall_enabled = not getattr(self.graph_model, "waterfall_enabled", False)

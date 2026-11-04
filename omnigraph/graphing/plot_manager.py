@@ -499,6 +499,11 @@ class PlotManager:
             frame.set_edgecolor(legend_color("legend_edge_color",theme.get("legend.edgecolor",theme["axes.edgecolor"])))
             frame.set_alpha(max(0.0,min(1.0,float(getattr(self.model,"legend_frame_alpha",0.9)))))
 
+        if is_waterfall and not self.model.waterfall_show_y_axis:
+            for axis in self.fig.axes:
+                axis.yaxis.set_visible(False)
+                axis.spines["left"].set_visible(False)
+                axis.spines["right"].set_visible(False)
         try:
             self.fig.tight_layout(pad=1.2)
         except Exception:

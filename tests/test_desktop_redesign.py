@@ -48,11 +48,11 @@ def test_compact_editor_keeps_figure_readable_and_closes_cleanly(app):
     height=graph.canvas_widget.height()
     graph.edit_chart_button.setChecked(True)
     app.processEvents()
-    assert graph.editor_dialog.isVisible()
-    assert graph.canvas_widget.height()>=height-2
+    assert not graph.editor_dialog.isVisible()
+    assert graph.canvas_widget.height()>80
     graph.txt_quick_title.setText("A finished figure")
     graph._on_quick_label_edited()
-    graph.editor_dialog.reject()
+    graph.edit_chart_button.setChecked(False)
     assert not graph.edit_chart_button.isChecked()
     assert graph.chart_settings.isHidden()
     assert graph.graph_model.title_text=="A finished figure"
@@ -74,9 +74,9 @@ def test_editor_moves_between_small_window_and_side_panel_without_losing_edits(a
     assert graph.txt_quick_x.text()=="Elapsed time (s)"
     window.resize(800,600)
     app.processEvents()
-    assert graph.editor_dialog.isVisible()
+    assert not graph.editor_dialog.isVisible()
     assert graph.txt_quick_x.text()=="Elapsed time (s)"
-    graph.editor_dialog.accept()
+    graph.edit_chart_button.setChecked(False)
     window._remember_saved_state()
     window.close()
 

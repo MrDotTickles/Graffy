@@ -11,9 +11,9 @@ from typing import Optional, Dict
 from PyQt6.QtWidgets import (
     QMainWindow, QTabWidget, QDockWidget, QToolBar, QToolButton,
     QMenu, QMessageBox, QFileDialog, QInputDialog, QLabel,
-    QStatusBar, QApplication, QWidget, QSizePolicy, QStackedWidget, QVBoxLayout, QPushButton
+    QStatusBar, QApplication, QWidget, QSizePolicy, QStackedWidget, QVBoxLayout, QPushButton, QComboBox
 )
-from PyQt6.QtCore import Qt, pyqtSlot, QSize
+from PyQt6.QtCore import Qt, pyqtSlot, QSize, QSettings
 from PyQt6.QtGui import QAction, QKeySequence, QIcon, QShortcut, QPalette, QColor
 
 from omnigraph.core.project import Project, GraphModel, CurveModel, ReportModel
@@ -30,7 +30,7 @@ from omnigraph.ui.dialogs import (
 )
 from omnigraph.ui.samples import SampleProjects
 from omnigraph.ui.styles.design import icon, refresh_icons
-from omnigraph.ui.styles.qss import DARK_THEME_QSS, LIGHT_THEME_QSS
+from omnigraph.ui.styles.qss import DARK_THEME_QSS, LIGHT_THEME_QSS, scaled_stylesheet
 
 
 class MainWindow(QMainWindow):
@@ -40,6 +40,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.project = project if project is not None else Project.create_default("Untitled Project")
         self.is_dark_theme = False
+        self.interface_scale = 1.0
         self.zoom_level = 1.0
         _app = QApplication.instance()
         self._base_font_size = _app.font().pointSize() if _app and _app.font().pointSize() > 0 else 10
@@ -60,6 +61,7 @@ class MainWindow(QMainWindow):
         self._init_ui()
         self._apply_theme(dark=False)
         self._populate_all_views()
+        self.set_interface_scale(QSettings("Graffy","Graffy").value("ui/interface_scale",1.0,type=float),persist=False)
 
     def enable_guided_workspace(self):
         """Progressively disclose advanced controls for ordinary app launches."""
@@ -517,9 +519,20 @@ class MainWindow(QMainWindow):
         self.advanced_tools_action.setChecked(True)
         self.advanced_tools_action.toggled.connect(self.set_advanced_tools_visible)
         menu_view.addSeparator()
-        self.act_zoom_in = self._add_action(menu_view, "Zoom In", self.zoom_in, "Ctrl++")
-        self.act_zoom_out = self._add_action(menu_view, "Zoom Out", self.zoom_out, "Ctrl+-")
-        self.act_reset_zoom = self._add_action(menu_view, "Reset Zoom", self.reset_zoom, "Ctrl+0")
+        interface_menu=menu_view.addMenu("Interface size")
+        for percent in (80,90,100,110,125,150,175,200):
+            interface_menu.addAction(f"{percent}%",lambda checked=False,p=percent:self.set_interface_scale(p/100))
+        self.interface_scale_combo=QComboBox()
+        self.interface_scale_combo.setToolTip("Scale the whole interface: text, buttons, menus and dialogs")
+        self.interface_scale_combo.setAccessibleName("Interface size")
+        for percent in (80,90,100,110,125,150,175,200):
+            self.interface_scale_combo.addItem(f"UI {percent}%",percent/100)
+        self.interface_scale_combo.setCurrentIndex(2)
+        self.interface_scale_combo.currentIndexChanged.connect(lambda _:self.set_interface_scale(self.interface_scale_combo.currentData()))
+        self.statusBar().addPermanentWidget(self.interface_scale_combo)
+        self.act_zoom_in = self._add_action(menu_view, "Graph and data zoom in", self.zoom_in, "Ctrl++")
+        self.act_zoom_out = self._add_action(menu_view, "Graph and data zoom out", self.zoom_out, "Ctrl+-")
+        self.act_reset_zoom = self._add_action(menu_view, "Reset graph and data zoom", self.reset_zoom, "Ctrl+0")
         menu_view.addSeparator()
         menu_view.addAction(self.dock_explorer.toggleViewAction())
         menu_view.addAction(self.dock_properties.toggleViewAction())
@@ -750,7 +763,7 @@ class MainWindow(QMainWindow):
     def _apply_theme(self, dark: bool):
         self.is_dark_theme = dark
         app = QApplication.instance()
-        desired_theme = DARK_THEME_QSS if dark else LIGHT_THEME_QSS
+        desired_theme = scaled_stylesheet(DARK_THEME_QSS if dark else LIGHT_THEME_QSS,self.interface_scale)
         if app is not None and (app.styleSheet() != desired_theme or getattr(app,"is_dark_theme",None) != dark):
             app.is_dark_theme = dark
             palette = QPalette()
@@ -764,10 +777,7 @@ class MainWindow(QMainWindow):
                                 (QPalette.ColorRole.HighlightedText,"#b0aaff" if dark else "#4f46e5")):
                 palette.setColor(role,QColor(value))
             app.setPalette(palette)
-            if dark:
-                app.setStyleSheet(DARK_THEME_QSS)
-            else:
-                app.setStyleSheet(LIGHT_THEME_QSS)
+            app.setStyleSheet(desired_theme)
         if hasattr(self, "data_workflow_button"):
             for button, name in ((self.data_workflow_button,"import"),
                                  (self.chart_workflow_button,"chart"),
@@ -825,8 +835,8 @@ class MainWindow(QMainWindow):
         sw.update_linked_graphs(self.project.graphs)
         sw.undo_stack.canUndoChanged.connect(self._update_undo_redo_actions)
         sw.undo_stack.canRedoChanged.connect(self._update_undo_redo_actions)
-        if hasattr(self, "zoom_level") and self.zoom_level != 1.0:
-            sw.set_zoom(self.zoom_level)
+        if self.zoom_level*self.interface_scale != 1.0:
+            sw.set_zoom(self.zoom_level if isinstance(w,GraphViewWidget) else self.zoom_level*self.interface_scale)
         idx = self.center_tabs.addTab(sw, icon("sheet"), sheet.name)
         self.tab_metadata[idx] = ("sheet", sheet.name, wb.name, sw)
         return idx
@@ -839,15 +849,15 @@ class MainWindow(QMainWindow):
         gw.curves_changed.connect(self._on_graph_curves_changed)
         gw.request_jump_to_sheet.connect(lambda s, w: self._on_explorer_item_activated("sheet", s, w))
         if hasattr(self, "zoom_level") and self.zoom_level != 1.0:
-            gw.set_zoom(self.zoom_level)
+            gw.set_zoom(self.zoom_level if isinstance(w,GraphViewWidget) else self.zoom_level*self.interface_scale)
         idx = self.center_tabs.addTab(gw, icon("chart"), graph.title)
         self.tab_metadata[idx] = ("graph", graph.title, graph.id, gw)
         return idx
 
     def _add_report_view(self, rep):
         rw = ReportViewWidget(rep, self)
-        if hasattr(self, "zoom_level") and self.zoom_level != 1.0:
-            rw.set_zoom(self.zoom_level)
+        if self.zoom_level*self.interface_scale != 1.0:
+            rw.set_zoom(self.zoom_level if isinstance(w,GraphViewWidget) else self.zoom_level*self.interface_scale)
         idx = self.center_tabs.addTab(rw, icon("report"), rep.title)
         self.tab_metadata[idx] = ("report", rep.title, rep.id, rw)
         return idx
@@ -1657,6 +1667,37 @@ class MainWindow(QMainWindow):
             if hasattr(self, "act_redo"):
                 self.act_redo.setEnabled(False)
 
+    def set_interface_scale(self,scale,persist=True):
+        self.interface_scale=round(max(.8,min(2.0,float(scale))),2)
+        app=QApplication.instance()
+        if app is not None:
+            base=getattr(app,"_graffy_base_ui_font",None)
+            if base is None:
+                from PyQt6.QtGui import QFont
+                base=QFont(app.font())
+                app._graffy_base_ui_font=base
+            from PyQt6.QtGui import QFont
+            font=QFont(base)
+            font.setPointSizeF(max(6,base.pointSizeF()*self.interface_scale))
+            app.setFont(font)
+        self._apply_theme(self.is_dark_theme)
+        from PyQt6.QtWidgets import QAbstractButton
+        for control in self.findChildren(QToolBar)+self.findChildren(QAbstractButton):
+            base_size=getattr(control,"_base_ui_icon_size",None)
+            if base_size is None:
+                base_size=control.iconSize()
+                control._base_ui_icon_size=base_size
+            control.setIconSize(QSize(round(base_size.width()*self.interface_scale),round(base_size.height()*self.interface_scale)))
+        self.interface_scale_combo.blockSignals(True)
+        self.interface_scale_combo.setCurrentIndex(self.interface_scale_combo.findData(self.interface_scale))
+        self.interface_scale_combo.blockSignals(False)
+        for i in range(self.center_tabs.count()):
+            view=self.center_tabs.widget(i)
+            if not isinstance(view,GraphViewWidget) and hasattr(view,"set_zoom"):
+                view.set_zoom(self.zoom_level*self.interface_scale)
+        if persist:
+            QSettings("Graffy","Graffy").setValue("ui/interface_scale",self.interface_scale)
+
     def zoom_in(self):
         self.set_zoom_level(self.zoom_level + 0.1)
 
@@ -1668,16 +1709,10 @@ class MainWindow(QMainWindow):
 
     def set_zoom_level(self, level: float):
         self.zoom_level = round(max(0.7, min(level, 2.0)), 2)
-        target_pt = max(6, int(round(self._base_font_size * self.zoom_level)))
-        app = QApplication.instance()
-        if app is not None:
-            f = app.font()
-            f.setPointSize(target_pt)
-            app.setFont(f)
         for i in range(self.center_tabs.count()):
             w = self.center_tabs.widget(i)
             if hasattr(w, "set_zoom"):
-                w.set_zoom(self.zoom_level)
+                w.set_zoom(self.zoom_level if isinstance(w,GraphViewWidget) else self.zoom_level*self.interface_scale)
         if hasattr(self, "status_bar") and self.status_bar:
             self.status_bar.showMessage(f"Zoom: {int(self.zoom_level * 100)}%", 2000)
 

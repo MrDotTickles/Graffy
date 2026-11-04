@@ -226,6 +226,7 @@ class GraphModel:
         self.theme: str = "Origin Classic"  # Origin Classic, Nature, Science, Modern Dark, Prism, High-Contrast
 
         # Waterfall / Offset Spectra properties
+        self.waterfall_show_y_axis: bool = False
         self.waterfall_enabled: bool = waterfall_enabled
         self.waterfall_offset_mode: str = "uniform"  # "uniform", "percentage", "absolute"
         self.waterfall_y_step: float = waterfall_y_step
@@ -328,6 +329,7 @@ class GraphModel:
             "legend_edge_color": self.legend_edge_color,
             "legend_frame_alpha": self.legend_frame_alpha,
             "theme": self.theme,
+            "waterfall_show_y_axis": self.waterfall_show_y_axis,
             "waterfall_enabled": self.waterfall_enabled,
             "waterfall_offset_mode": self.waterfall_offset_mode,
             "waterfall_y_step": self.waterfall_y_step,
@@ -381,6 +383,7 @@ class GraphModel:
         g.legend_edge_color = d.get("legend_edge_color", "auto")
         g.legend_frame_alpha = d.get("legend_frame_alpha", 0.9)
         g.theme = d.get("theme", "Origin Classic")
+        g.waterfall_show_y_axis = d.get("waterfall_show_y_axis", False)
         g.waterfall_enabled = d.get("waterfall_enabled", False)
         g.waterfall_offset_mode = d.get("waterfall_offset_mode", "uniform")
         g.waterfall_y_step = d.get("waterfall_y_step", 0.0)
