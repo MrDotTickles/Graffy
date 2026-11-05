@@ -330,6 +330,34 @@ class Worksheet:
         except ValueError:
             return -1
 
+    def add_row_index_for_single_column(self):
+        """Give a one-column dataset an X axis based on its row numbers."""
+        if len(self.columns) == 1:
+            values = self.columns[0]
+            values.name = "B"
+            values.role = ColumnRole.Y
+            self.columns.insert(0, Column(
+                name="A", long_name="Row Number", role=ColumnRole.X,
+                data=list(range(1, len(values.data) + 1)),
+            ))
+
+    def plot_column_pairs(self, selected_columns=()) -> list[tuple[int, int]]:
+        """Resolve X/Y pairs using the current selection, or all Y columns by default."""
+        selected = sorted({i for i in selected_columns if self.get_column(i) is not None})
+        if selected:
+            y_columns = [i for i in selected if self.columns[i].role == ColumnRole.Y]
+            x_columns = [i for i in selected if self.columns[i].role == ColumnRole.X]
+        else:
+            y_columns = [i for i, col in enumerate(self.columns) if col.role == ColumnRole.Y]
+            x_columns = []
+        if not y_columns and not selected and self.columns:
+            y_columns = [1 if len(self.columns) > 1 else 0]
+        return [
+            (next((x for x in reversed(x_columns) if x < y), x_columns[0]) if x_columns
+             else self.find_x_column_for(y), y)
+            for y in y_columns
+        ]
+
     def find_x_column_for(self, y_col_index: int) -> Optional[int]:
         """
         Finds the corresponding X column for a given Y column.

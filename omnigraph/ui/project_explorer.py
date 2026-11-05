@@ -8,19 +8,15 @@ Features live search filtering, single-click instant navigation,
 bidirectional active tab tracking, and rich context menus.
 """
 
-from typing import Optional, List, Dict, Any
 import os
-import uuid
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTreeWidget, QTreeWidgetItem,
-    QToolButton, QMenu, QInputDialog, QMessageBox, QHeaderView, QLineEdit,
-    QApplication, QFileDialog, QLabel, QPushButton
+    QToolButton, QMenu, QHeaderView, QLineEdit, QLabel, QPushButton
 )
 from PyQt6.QtCore import pyqtSignal, Qt, QSize
-from PyQt6.QtGui import QFont, QColor, QBrush, QAction
+from PyQt6.QtGui import QColor, QBrush
 from omnigraph.ui.styles.design import icon
-from omnigraph.core.project import Project, GraphModel, ReportModel, CurveModel
-from omnigraph.core.worksheet import Workbook, Worksheet, ColumnRole
+from omnigraph.core.project import Project
 
 
 class ProjectExplorerWidget(QWidget):
@@ -30,7 +26,7 @@ class ProjectExplorerWidget(QWidget):
     item_activated = pyqtSignal(str, str, str)  # (item_type: 'sheet'|'graph'|'report', item_id, parent_id)
     request_new_graph = pyqtSignal()
     request_new_sheet = pyqtSignal()
-    request_ai_extract = pyqtSignal()
+    request_import_into_chart = pyqtSignal()
     request_new_project = pyqtSignal()
     request_open_project = pyqtSignal()
     request_save_project = pyqtSignal()
@@ -121,15 +117,16 @@ class ProjectExplorerWidget(QWidget):
         card_layout.addLayout(text_layout, 1)
 
         btn_proj_menu = QToolButton()
-        btn_proj_menu.setText("⋮")
-        btn_proj_menu.setToolTip("Project Actions (Rename, Save, Open)")
+        btn_proj_menu.setIcon(icon("more"))
+        btn_proj_menu.setToolTip("Project actions")
+        btn_proj_menu.setAccessibleName("Project actions")
         btn_proj_menu.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         p_menu = QMenu(btn_proj_menu)
-        p_menu.addAction("✏️ Rename Project...", self.request_rename_project.emit)
-        p_menu.addAction("💾 Save Project", self.request_save_project.emit)
+        p_menu.addAction(icon("edit"), "Rename project…", self.request_rename_project.emit)
+        p_menu.addAction(icon("save"), "Save project", self.request_save_project.emit)
         p_menu.addSeparator()
-        p_menu.addAction("📂 Open Project...", self.request_open_project.emit)
-        p_menu.addAction("➕ New Project", self.request_new_project.emit)
+        p_menu.addAction(icon("folder"), "Open project…", self.request_open_project.emit)
+        p_menu.addAction(icon("plus"), "New project", self.request_new_project.emit)
         btn_proj_menu.setMenu(p_menu)
         card_layout.addWidget(btn_proj_menu)
 
@@ -150,13 +147,6 @@ class ProjectExplorerWidget(QWidget):
         btn_add_graph.setToolTip("Create new graph")
         btn_add_graph.clicked.connect(self.request_new_graph.emit)
         tools_layout.addWidget(btn_add_graph, 1)
-
-        btn_refresh = QToolButton()
-        btn_refresh.setText("🔄")
-        btn_refresh.setToolTip("Refresh project explorer")
-        btn_refresh.setStyleSheet("padding: 4px 8px; font-size: 13px;")
-        btn_refresh.clicked.connect(self.populate_tree)
-        btn_refresh.hide()
 
         layout.addLayout(tools_layout)
 
@@ -378,7 +368,7 @@ class ProjectExplorerWidget(QWidget):
             # Blank space context menu
             menu.addAction("➕ Add Worksheet", self.request_new_sheet.emit)
             menu.addAction("➕ Create New Graph", self.request_new_graph.emit)
-            menu.addAction("Import data into a graph...", self.request_ai_extract.emit)
+            menu.addAction("Import data into a graph...", self.request_import_into_chart.emit)
             menu.addSeparator()
             menu.addAction("🔄 Refresh Explorer", self.populate_tree)
             menu.exec(self.tree.mapToGlobal(pos))
@@ -390,7 +380,7 @@ class ProjectExplorerWidget(QWidget):
             header_text = item.text(0)
             if "DATA TABLES" in header_text:
                 menu.addAction("➕ Add Worksheet", self.request_new_sheet.emit)
-                menu.addAction("Import data into a graph...", self.request_ai_extract.emit)
+                menu.addAction("Import data into a graph...", self.request_import_into_chart.emit)
             elif "GRAPHS" in header_text:
                 menu.addAction("➕ Create New Graph", self.request_new_graph.emit)
             elif "REPORTS" in header_text:

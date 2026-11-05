@@ -30,7 +30,6 @@ from omnigraph.ui.dialogs.quick_labels_dialog import QuickLabelsDialog
 from omnigraph.ui.dialogs.formula_dialog import FormulaDialog
 from omnigraph.ui.dialogs.column_prop_dialog import ColumnPropertiesDialog
 from omnigraph.ui.dialogs.export_dialog import ExportDialog
-from omnigraph.ui.dialogs.ai_extractor_dialog import AIDataExtractorDialog
 from omnigraph.ui.dialogs.import_dialog import ImportDialog
 
 
@@ -381,11 +380,6 @@ def test_dialogs_with_zero_workbooks(qapp):
     assert dlg3._run_peak_search() is None
     dlg3._on_accept()
     dlg3.close()
-
-    # AIDataExtractorDialog
-    dlg4 = AIDataExtractorDialog(p_zero_wb)
-    assert len(p_zero_wb.workbooks) == 0
-    dlg4.close()
 
 
 def test_dialogs_with_zero_sheets(qapp):

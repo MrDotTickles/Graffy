@@ -79,7 +79,16 @@ QTabWidget::pane { background: @surface; border: 1px solid @line; }
 QTabBar::tab { font-weight: 500; background: @bg; color: @muted; border: none; border-bottom: 2px solid transparent; padding: 10px 26px 10px 14px; margin-right: 1px; }
 QTabBar::tab:selected { background: @surface; color: @accent; border-bottom: 2px solid @accent; }
 QTabBar::tab:hover:!selected { background: @hover; color: @text; }
-QTabBar::close-button { image: url(@close); subcontrol-position: right; margin-right: 4px; padding: 2px; }
+QTabWidget#WorkspaceTabs::pane, QTabWidget#ChartEditorTabs::pane { border: none; }
+QTabWidget#WorkspaceTabs QTabBar::base, QTabWidget#ChartEditorTabs QTabBar::base { border: none; }
+QTabWidget#WorkspaceTabs QTabBar::tab, QTabWidget#ChartEditorTabs QTabBar::tab {
+    border: none; border-top-left-radius: 5px; border-top-right-radius: 5px;
+}
+QTabWidget#WorkspaceTabs QTabBar::tab:selected, QTabWidget#ChartEditorTabs QTabBar::tab:selected {
+    background: @selection; color: @accent; border: none;
+}
+QToolBar#ChartWorkspaceToolbar { border-bottom: none; }
+QTabBar::close-button { image: url(@close); subcontrol-position: right; width: 12px; height: 12px; margin-right: 4px; padding: 2px; }
 QTabBar::close-button:hover { image: url(@close_hover); }
 QScrollArea { border: none; background: @surface; }
 QScrollArea > QWidget > QWidget { background: @surface; }

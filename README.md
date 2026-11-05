@@ -83,9 +83,10 @@ environment when not needed. On Windows, `scripts/Setup_Graffy.bat` recreates th
 the launch and release buttons run it automatically if missing. Running source
 code locally will recreate several hundred megabytes of scientific libraries.
 
-Import files or messy text with **Import data**. Both import routes share local
-automatic detection; **Plot → Import data into a graph** adds graph targeting and
-a source-text view. [Dialog improvements](docs/IMPORT_AND_DIALOGS.md).
+Use **Import data** for files or pasted text. The preview shows detected headers,
+numeric columns, and values that will be left blank. **Plot → Import data into a graph**
+and dropping files onto a chart open the same preview with a chart destination.
+[Import and dialog guide](docs/IMPORT_AND_DIALOGS.md).
 
 The redesigned desktop workflow and validation notes are documented in [Desktop redesign](docs/DESKTOP_REDESIGN.md). Closing tabs keeps project data intact; reopen items from the project panel.
 

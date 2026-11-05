@@ -48,7 +48,7 @@ def test_compact_editor_keeps_figure_readable_and_closes_cleanly(app):
     height=graph.canvas_widget.height()
     graph.edit_chart_button.setChecked(True)
     app.processEvents()
-    assert not graph.editor_dialog.isVisible()
+    assert not graph.chart_settings.isWindow()
     assert graph.canvas_widget.height()>80
     graph.txt_quick_title.setText("A finished figure")
     graph._on_quick_label_edited()
@@ -68,13 +68,13 @@ def test_editor_moves_between_small_window_and_side_panel_without_losing_edits(a
     graph._on_quick_label_edited()
     window.resize(1600,900)
     app.processEvents()
-    assert not graph.editor_dialog.isVisible()
+    assert not graph.chart_settings.isWindow()
     assert graph.chart_settings.parentWidget() is graph.chart_splitter
     assert graph.chart_settings.isVisible()
     assert graph.txt_quick_x.text()=="Elapsed time (s)"
     window.resize(800,600)
     app.processEvents()
-    assert not graph.editor_dialog.isVisible()
+    assert not graph.chart_settings.isWindow()
     assert graph.txt_quick_x.text()=="Elapsed time (s)"
     graph.edit_chart_button.setChecked(False)
     window._remember_saved_state()

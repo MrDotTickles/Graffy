@@ -1,13 +1,11 @@
 import os
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 import pytest
-from PyQt6.QtWidgets import QApplication, QMessageBox, QWidget, QPushButton
+from PyQt6.QtWidgets import QApplication, QMessageBox, QWidget
 from PyQt6.QtCore import QRect
 from pandas.testing import assert_frame_equal
 from omnigraph.ui.dialogs.import_dialog import ImportDialog
-from omnigraph.ui.dialogs.ai_extractor_dialog import AIDataExtractorDialog
 from omnigraph.ui.dialogs.export_dialog import ExportDialog
-from omnigraph.ui.dialogs.fit_dialog import FitDialog
 from omnigraph.ui.samples import SampleProjects
 from omnigraph.graphing.plot_manager import PlotManager
 
@@ -18,13 +16,10 @@ def app():
 def test_both_import_routes_read_the_same_instrument_text(app):
     text = "Time (s),Signal (V)\n0,10\n1,20\n2,30"
     regular = ImportDialog(initial_text=text)
-    graph_import = AIDataExtractorDialog(SampleProjects.create_spectroscopy_sample())
-    graph_import.tabs_source.setCurrentIndex(1)
-    graph_import.txt_paste.setPlainText(text)
-    graph_import._run_extraction()
-    assert_frame_equal(regular.imported_dataframe, graph_import.extraction_result.dataframe)
-    assert regular.btn_ok.isEnabled()
-    assert "AI" not in graph_import.windowTitle()
+    graph_import = ImportDialog(initial_text=text, active_graph_title="Existing chart")
+    assert_frame_equal(regular.imported_dataframe, graph_import.imported_dataframe)
+    assert regular.btn_ok.isEnabled() and graph_import.btn_ok.isEnabled()
+    assert graph_import.graph_destination.currentData() is True
     regular.close(); graph_import.close()
 
 def test_import_advanced_settings_survive_collapse(app):
@@ -58,12 +53,4 @@ def test_small_screen_keeps_import_buttons_accessible(app, monkeypatch):
     assert dialog.height() <= 352
     assert dialog.btn_ok.mapTo(dialog,dialog.btn_ok.rect().bottomRight()).y() <= dialog.height()
     assert dialog.btn_ok.mapTo(dialog,dialog.btn_ok.rect().bottomRight()).x() <= dialog.width()
-    dialog.close()
-
-def test_specialized_import_preview_is_not_hidden_in_advanced_options(app):
-    dialog=AIDataExtractorDialog(SampleProjects.create_spectroscopy_sample())
-    dialog.show(); app.processEvents()
-    preview=next(b for b in dialog.findChildren(QPushButton) if b.text()=="Preview data")
-    assert preview.isVisible()
-    assert not dialog.raw_options.isVisible()
     dialog.close()

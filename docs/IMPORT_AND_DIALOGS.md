@@ -1,14 +1,12 @@
 # Import and popup usability
 
-Both import windows use `SmartDataExtractor`, a local heuristic parser. There is
-no separate AI model or external AI service. The old AI name exaggerated the difference.
+Graffy uses one import dialog and a local parser for files and pasted data.
 
-- **File → Import data** is the standard path for CSV, Excel, instrument files,
-  multiple files, or pasted text. Detection, table preview, and an explicit
-  Create a graph checkbox are visible. Reading and batch options are expandable.
-- **Plot → Import data into a graph** retains the specialist single-source route:
-  inspect original text and choose a new or existing graph. Its shortcut remains
-  Ctrl+Shift+I. The old Python class name is retained for compatibility.
+- **File → Import data** opens the preview for CSV, Excel, instrument files,
+  multiple files, or pasted text. Check the detected headers, numeric columns,
+  and values that will be left blank. Reading and batch options are expandable.
+- **Plot → Import data into a graph** (Ctrl+Shift+I) and dropping files on a chart
+  open that same dialog. Choose whether to plot the data and where to put it.
 
 Other changes:
 
@@ -22,7 +20,7 @@ Other changes:
 - Shared scrollable bodies keep action buttons outside the scrolling area, and
   window dimensions adapt to the available screen.
 
-Validation: 419 tests passed in the full suite, including five new checks for
+Earlier validation: 419 tests passed in the full suite, including five new checks for
 shared parser results, advanced-option preservation, overwrite cancellation,
 small-screen action access, and visible specialized preview. A further 36 focused
 checks passed after final styling and export-preview adjustments. Scientific

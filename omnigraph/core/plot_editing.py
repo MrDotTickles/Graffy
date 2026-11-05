@@ -1,4 +1,7 @@
 """Data-preserving changes shared by chart appearance controls."""
+from copy import deepcopy
+import uuid
+
 from matplotlib.colors import to_rgba
 
 PLOT_GROUPS = (
@@ -78,3 +81,27 @@ def change_graph_plot_type(graph, plot_type):
     graph.plot_type = plot_type
     graph.x_auto_limits = graph.y_auto_limits = graph.y2_auto_limits = True
     return True
+
+
+def rebind_chart_data(graph, mappings, *, copy_title=None):
+    """Reuse chart styling with new data. Old analysis results stay on the original chart."""
+    if copy_title is not None:
+        graph = deepcopy(graph)
+        graph.id = uuid.uuid4().hex[:8]
+        graph.title = copy_title
+
+    measured = [curve for curve in graph.curves if not curve.is_fit_curve]
+    if len(measured) != len(mappings):
+        raise ValueError("Choose data for every series before replacing chart data.")
+    for curve, (workbook, sheet, x, y, error, label) in zip(measured, mappings):
+        if copy_title is not None:
+            curve.id = uuid.uuid4().hex[:8]
+        curve.source_workbook = workbook
+        curve.source_sheet = sheet
+        curve.x_col_idx = x
+        curve.y_col_idx = y
+        curve.y_err_col_idx = error
+        curve.label = label
+    graph.curves = measured
+    graph.annotations = [ann for ann in graph.annotations if ann.get("type") not in {"band", "bracket", "significance"}]
+    return graph

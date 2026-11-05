@@ -42,7 +42,6 @@ from omnigraph.ui.dialogs import (
     PeakAnalysisDialog,
     ExportDialog,
     ImportDialog,
-    AIDataExtractorDialog,
 )
 
 
@@ -1309,12 +1308,6 @@ class TestFeature13SmartIngestionBatch:
         assert len(grid) == 2
         assert grid[0] == [1.25, 3.45]
         assert grid[1] == [6.78, 9.10]
-
-    def test_f13_t2_ai_extractor_dialog_instantiation(self, qapp):
-        proj = SampleProjects.create_spectroscopy_sample()
-        dlg = AIDataExtractorDialog(proj, proj.graphs[0])
-        assert dlg is not None
-        dlg.close()
 
     def test_f13_t2_import_dialog_file_selection(self, qapp, tmp_path):
         f1 = tmp_path / "sel1.csv"

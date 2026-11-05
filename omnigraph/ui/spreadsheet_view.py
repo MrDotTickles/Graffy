@@ -10,23 +10,23 @@ import inspect
 import copy
 import re
 from itertools import groupby
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Any
 import numpy as np
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTableView, QHeaderView,
-    QMenu, QMessageBox, QInputDialog, QLabel, QLineEdit, QComboBox,
+    QWidget, QVBoxLayout, QHBoxLayout, QTableView,
+    QMenu, QMessageBox, QInputDialog, QLabel, QLineEdit,
     QToolButton, QAbstractItemView, QApplication, QStyledItemDelegate,
-    QAbstractItemDelegate, QToolBar, QSizePolicy
+    QAbstractItemDelegate, QToolBar
 )
 from PyQt6.QtCore import (
     Qt, QAbstractTableModel, QModelIndex, pyqtSignal, QEvent, QSize, QItemSelectionModel
 )
-from PyQt6.QtGui import QAction, QKeySequence, QColor, QBrush, QFont, QUndoStack
+from PyQt6.QtGui import QKeySequence, QColor, QBrush, QFont, QUndoStack
 
 from omnigraph.ui.styles.design import icon
-from omnigraph.core.worksheet import Worksheet, Column, ColumnRole
+from omnigraph.core.worksheet import Worksheet, ColumnRole
 from omnigraph.core.undo_manager import (
-    CellEditCommand, FormulaCommand, FillColumnCommand,
+    CellEditCommand, FillColumnCommand,
     ClearColumnCommand, WorksheetSnapshotCommand
 )
 from omnigraph.core.clipboard_parser import ClipboardTableParser
@@ -310,19 +310,6 @@ class SpreadsheetWidget(QWidget):
         self.act_sheet_del_col = self.toolbar.addAction("- Col", self.delete_selected_columns)
         self.act_sheet_del_col.setToolTip("Delete currently selected column(s)")
 
-        # Retain btn_add_col and btn_del_col attributes for programmatic backward-compatibility without unmanaged layout positioning
-        self.btn_add_col = QToolButton()
-        self.btn_add_col.hide()
-        self.btn_add_col.setText("+ Col")
-        self.btn_add_col.setToolTip("Add new column")
-        self.btn_add_col.clicked.connect(self.add_column)
-
-        self.btn_del_col = QToolButton()
-        self.btn_del_col.hide()
-        self.btn_del_col.setText("- Col")
-        self.btn_del_col.setToolTip("Delete currently selected column(s)")
-        self.btn_del_col.clicked.connect(self.delete_selected_columns)
-
         # Column Role dropdown properly added to worksheet local action toolbar adjacent to column tools
         self.btn_role = QToolButton()
         self.btn_role.setText("Set Role ▾")
@@ -569,8 +556,6 @@ class SpreadsheetWidget(QWidget):
         indexes = self.table_view.selectionModel().selectedIndexes()
         if not indexes:
             self.lbl_col_info.setText("Selected: None")
-            if hasattr(self, "btn_del_col"):
-                self.btn_del_col.setToolTip("Delete currently selected column(s)")
             if hasattr(self, "act_sheet_del_col"):
                 self.act_sheet_del_col.setToolTip("Delete currently selected column(s)")
             self.selection_changed.emit([])
@@ -582,15 +567,11 @@ class SpreadsheetWidget(QWidget):
             if col:
                 col_name_label = f"'{col.name}: {col.display_label}'" if col.display_label and col.display_label != col.name else f"'{col.name}'"
                 self.lbl_col_info.setText(f"Col {col.name} ({col.role.value}): {col.display_label}")
-                if hasattr(self, "btn_del_col"):
-                    self.btn_del_col.setToolTip(f"Delete column {col_name_label} (Shift+Del)")
                 if hasattr(self, "act_sheet_del_col"):
                     self.act_sheet_del_col.setToolTip(f"Delete column {col_name_label} (Shift+Del)")
         else:
             col_names = [self.worksheet.get_column(c).name for c in cols if self.worksheet.get_column(c)]
             self.lbl_col_info.setText(f"Selected {len(cols)} Columns: {', '.join(col_names)}")
-            if hasattr(self, "btn_del_col"):
-                self.btn_del_col.setToolTip(f"Delete {len(cols)} selected columns ({', '.join(col_names)}) (Shift+Del)")
             if hasattr(self, "act_sheet_del_col"):
                 self.act_sheet_del_col.setToolTip(f"Delete {len(cols)} selected columns ({', '.join(col_names)}) (Shift+Del)")
 

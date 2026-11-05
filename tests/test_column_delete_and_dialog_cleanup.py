@@ -38,20 +38,15 @@ def qapp():
 
 
 def test_no_duplicate_col_buttons_in_spreadsheet_toolbar(qapp):
-    """Ensure + Col and - Col buttons are NOT added to the sheet toolbar (preventing duplicate controls)."""
+    """Ensure the sheet toolbar provides exactly one action for each column command."""
     proj = SampleProjects.create_spectroscopy_sample()
     win = MainWindow(project=proj)
     sw = win.get_active_spreadsheet_widget()
     assert sw is not None
 
-    # The attributes exist on sw for API / programmatic backward-compatibility:
-    assert hasattr(sw, "btn_add_col")
-    assert hasattr(sw, "btn_del_col")
-
-    # But they must NOT be widgets inside sw.toolbar:
-    toolbar_widgets = [sw.toolbar.widgetForAction(act) for act in sw.toolbar.actions()]
-    assert sw.btn_add_col not in toolbar_widgets
-    assert sw.btn_del_col not in toolbar_widgets
+    actions = [action.text() for action in sw.toolbar.actions()]
+    assert actions.count("+ Col") == 1
+    assert actions.count("- Col") == 1
 
     # Top ribbon toolbar must still provide the canonical actions:
     assert hasattr(win, "act_add_col")
@@ -157,13 +152,13 @@ def test_dynamic_tooltip_reflects_selected_column(qapp):
     sw.table_view.selectColumn(0)
     sw._on_selection_changed()
     assert f"'A: {col_a.display_label}'" in win.act_del_col.toolTip()
-    assert f"'A: {col_a.display_label}'" in sw.btn_del_col.toolTip()
+    assert f"'A: {col_a.display_label}'" in sw.act_sheet_del_col.toolTip()
 
     # Select column B
     sw.table_view.selectColumn(1)
     sw._on_selection_changed()
     assert f"'B: {col_b.display_label}'" in win.act_del_col.toolTip()
-    assert f"'B: {col_b.display_label}'" in sw.btn_del_col.toolTip()
+    assert f"'B: {col_b.display_label}'" in sw.act_sheet_del_col.toolTip()
     win.close()
 
 

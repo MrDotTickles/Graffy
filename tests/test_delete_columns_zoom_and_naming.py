@@ -57,10 +57,10 @@ def test_easy_delete_column_buttons_and_multi_column_undo(qapp):
     # Verify prominent - Col actions exist
     assert hasattr(win, "act_del_col")
     assert "- Col" in win.act_del_col.text()
-    assert hasattr(sw, "btn_del_col")
-    assert "- Col" in sw.btn_del_col.text()
-    assert hasattr(sw, "btn_add_col")
-    assert "+ Col" in sw.btn_add_col.text()
+    assert hasattr(sw, "act_sheet_del_col")
+    assert "- Col" in sw.act_sheet_del_col.text()
+    assert hasattr(sw, "act_sheet_add_col")
+    assert "+ Col" in sw.act_sheet_add_col.text()
 
     # Initial column count is 4 (Wavelength, Peak1, Peak2, Total_Spectrum)
     initial_cols = ws.column_count()

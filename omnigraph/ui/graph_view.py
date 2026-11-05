@@ -2,19 +2,16 @@
 Graph view widget containing OmniCanvas, quick styling controls, tool toggles, and export buttons.
 """
 
-import os
-from typing import Optional, List
 import numpy as np
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QToolBar, QToolButton,
-    QComboBox, QLabel, QMenu, QInputDialog, QMessageBox, QFileDialog, QToolTip,
-    QLineEdit, QScrollArea, QSizePolicy, QSplitter, QFormLayout, QPushButton, QTabWidget, QDialog, QCheckBox, QDoubleSpinBox
+    QComboBox, QLabel, QMenu, QInputDialog, QMessageBox, QToolTip,
+    QLineEdit, QScrollArea, QSizePolicy, QSplitter, QFormLayout, QTabWidget, QCheckBox, QDoubleSpinBox
 )
 from PyQt6.QtCore import pyqtSignal, Qt, QPoint, QRect
-from PyQt6.QtGui import QAction, QIcon, QKeySequence, QShortcut
+from PyQt6.QtGui import QAction, QKeySequence, QShortcut
 
-from omnigraph.core.project import GraphModel, Project, CurveModel
-from omnigraph.core.worksheet import Column, ColumnRole
+from omnigraph.core.project import GraphModel, Project
 from omnigraph.graphing.canvas import OmniCanvas
 from omnigraph.graphing.themes import THEMES
 from omnigraph.core.plot_editing import PLOT_GROUPS, change_graph_plot_type
@@ -31,11 +28,13 @@ class GraphViewWidget(QWidget):
     labels_changed = pyqtSignal()
     curves_changed = pyqtSignal()
     request_jump_to_sheet = pyqtSignal(str, str)  # (sheet_name, workbook_name)
+    request_replace_data = pyqtSignal(bool)  # duplicate first
 
     def __init__(self, graph_model: GraphModel, project: Project, parent=None):
         super().__init__(parent)
         self.graph_model = graph_model
         self.project = project
+        self._interface_scale = 1.0
 
         self._init_ui()
 
@@ -252,10 +251,6 @@ class GraphViewWidget(QWidget):
         self.chart_toolbar.setObjectName("ChartWorkspaceToolbar")
         self.chart_toolbar.setMovable(False)
         self.chart_toolbar.setFloatable(False)
-        title = QLabel("FIGURE")
-        title.setProperty("role", "eyebrow")
-        self.chart_toolbar.addWidget(title)
-        self.chart_toolbar.addSeparator()
         self.edit_chart_button = QToolButton()
         self.edit_chart_button.setText("Edit chart")
         self.edit_chart_button.setIcon(icon("edit"))
@@ -286,13 +281,48 @@ class GraphViewWidget(QWidget):
         plot_menu.aboutToShow.connect(self._sync_plot_type_actions)
         self.change_plot_button.setMenu(plot_menu)
         self.chart_toolbar.addWidget(self.change_plot_button)
-        self.legend_action=self.chart_toolbar.addAction("Legend…",self._open_legend_editor)
+        self.legend_action = self.chart_toolbar.addAction(icon("legend"), "Legend…", self._open_legend_editor)
         self.legend_action.setToolTip("Change series colors, names and legend appearance")
-        self.view_data_action = self.chart_toolbar.addAction(icon("sheet"), "View data", self._view_chart_data)
-        self.view_data_action.setEnabled(any(c.source_sheet for c in self.graph_model.curves))
+        data_button = QToolButton()
+        data_button.setText("Data")
+        data_button.setIcon(icon("sheet"))
+        data_button.setToolTip("View, add, or replace chart data")
+        data_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        data_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        data_menu = QMenu(data_button)
+        self.view_data_action = data_menu.addAction("View source worksheet", self._view_chart_data)
+        all_sources = data_menu.addMenu("Source worksheets")
+        data_menu.addAction("Add series…", self._open_add_layer_dialog)
+        data_menu.addSeparator()
+        replace_action = data_menu.addAction("Replace data…", lambda: self.request_replace_data.emit(False))
+        duplicate_action = data_menu.addAction("Duplicate with new data…", lambda: self.request_replace_data.emit(True))
+
+        def update_data_menu():
+            measured = any(not curve.is_fit_curve for curve in self.graph_model.curves)
+            sources = list(dict.fromkeys(
+                (c.source_sheet, c.source_workbook) for c in self.graph_model.curves if c.source_sheet
+            ))
+            self.view_data_action.setEnabled(bool(sources))
+            self.view_data_action.setVisible(len(sources) <= 1)
+            all_sources.menuAction().setVisible(len(sources) > 1)
+            all_sources.clear()
+            if len(sources) > 1:
+                for sheet, workbook in sources:
+                    all_sources.addAction(
+                        f"{workbook} / {sheet}",
+                        lambda checked=False, s=sheet, w=workbook: self.request_jump_to_sheet.emit(s, w),
+                    )
+            replace_action.setEnabled(measured)
+            duplicate_action.setEnabled(measured)
+
+        update_data_menu()
+        data_menu.aboutToShow.connect(update_data_menu)
+        data_button.setMenu(data_menu)
+        self.chart_toolbar.addWidget(data_button)
         navigation = QToolButton()
         navigation.setText("Explore")
         navigation.setIcon(icon("zoom"))
+        navigation.setToolTip("Explore the chart")
         navigation.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         navigation.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         menu = QMenu(navigation)
@@ -308,7 +338,11 @@ class GraphViewWidget(QWidget):
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding,QSizePolicy.Policy.Preferred)
         self.chart_toolbar.addWidget(spacer)
-        self.chart_toolbar.addAction(icon("copy"), "Copy graph", self._copy_to_clipboard)
+        copy_action = self.chart_toolbar.addAction(icon("copy"), "Copy graph", self._copy_to_clipboard)
+        self._chart_toolbar_buttons = (
+            self.edit_chart_button, self.change_plot_button, data_button, navigation,
+            self.chart_toolbar.widgetForAction(self.legend_action), self.chart_toolbar.widgetForAction(copy_action),
+        )
         self.chart_toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         layout.addWidget(self.chart_toolbar)
 
@@ -321,15 +355,10 @@ class GraphViewWidget(QWidget):
         settings = QVBoxLayout(content)
         settings.setContentsMargins(16,16,16,16)
         settings.setSpacing(12)
-        heading = QLabel("Chart appearance")
-        heading.setProperty("role","heading")
-        settings.addWidget(heading)
-        hint = QLabel("Changes appear on your figure as you edit.")
-        hint.setProperty("role","muted")
-        hint.setWordWrap(True)
-        settings.addWidget(hint)
         self.editor_tabs = QTabWidget()
+        self.editor_tabs.setObjectName("ChartEditorTabs")
         self.editor_tabs.setDocumentMode(True)
+        self.editor_tabs.tabBar().setDrawBase(False)
         settings.addWidget(self.editor_tabs)
         labels = QWidget()
         form = QFormLayout(labels)
@@ -390,34 +419,17 @@ class GraphViewWidget(QWidget):
         self.series_editor=SeriesEditor(self.graph_model)
         self.series_editor.changed.connect(self._on_series_style_changed)
         self.editor_tabs.addTab(self.series_editor,"Series")
-        source_heading = QLabel("DATA SOURCE")
-        source_heading.setProperty("role","eyebrow")
-        settings.addWidget(source_heading)
-        settings.addWidget(self.source_bar)
-        add_series = QPushButton("Add another data series…")
-        add_series.setIcon(icon("plus"))
-        add_series.clicked.connect(self._open_add_layer_dialog)
-        settings.addWidget(add_series)
+        self.source_bar.hide()
         settings.addStretch()
         self.chart_settings = QScrollArea()
         self.chart_settings.setObjectName("ChartSettingsPanel")
         self.chart_settings.setWidgetResizable(True)
         self.chart_settings.setWidget(content)
-        self.chart_settings.setMinimumWidth(0)
+        self.chart_settings.setMinimumSize(0, 0)
         self.chart_splitter.addWidget(self.chart_settings)
         self.chart_splitter.setStretchFactor(0,1)
         self.chart_splitter.setStretchFactor(1,0)
         self.chart_settings.hide()
-        self.editor_dialog = QDialog(self)
-        self.editor_dialog.setWindowTitle("Edit chart")
-        dialog_layout = QVBoxLayout(self.editor_dialog)
-        dialog_layout.setContentsMargins(8,8,8,8)
-        self.editor_done_button = QPushButton("Done")
-        self.editor_done_button.setDefault(True)
-        self.editor_done_button.setProperty("role","primary")
-        self.editor_done_button.clicked.connect(self.editor_dialog.accept)
-        dialog_layout.addWidget(self.editor_done_button)
-        self.editor_dialog.finished.connect(lambda _: self.edit_chart_button.setChecked(False))
         layout.addWidget(self.chart_splitter,1)
         self._sync_quick_labels()
 
@@ -426,16 +438,20 @@ class GraphViewWidget(QWidget):
         self._arrange_chart_editor()
 
     def _arrange_chart_editor(self):
-        if not hasattr(self,"editor_dialog"):
+        if not hasattr(self, "chart_settings"):
             return
         if not self.edit_chart_button.isChecked():
             self.chart_settings.hide()
-            self.editor_dialog.hide()
+            self.canvas_widget.setMinimumHeight(160)
             return
-        orientation=Qt.Orientation.Horizontal if self.width()>=950 else Qt.Orientation.Vertical
+        orientation = Qt.Orientation.Horizontal if self.width() / self._interface_scale >= 950 else Qt.Orientation.Vertical
+        if orientation == Qt.Orientation.Vertical:
+            available = max(0, self.height() - self.chart_toolbar.sizeHint().height())
+            self.canvas_widget.setMinimumHeight(min(160, int(available * 0.45)))
+        else:
+            self.canvas_widget.setMinimumHeight(160)
         changed=self.chart_splitter.orientation()!=orientation or not self.chart_settings.isVisible()
         self.chart_splitter.setOrientation(orientation)
-        self.editor_dialog.hide()
         self.chart_settings.setMaximumWidth(380 if orientation==Qt.Orientation.Horizontal else 16777215)
         self.chart_settings.setMaximumHeight(16777215)
         self.chart_settings.show()
@@ -444,8 +460,22 @@ class GraphViewWidget(QWidget):
             editor_size=min(350,max(120,int(extent*.43)))
             self.chart_splitter.setSizes([max(100,extent-editor_size),editor_size])
 
+    def set_interface_scale(self, scale):
+        self._interface_scale = scale
+        self._adapt_chart_toolbar()
+        self._arrange_chart_editor()
+
+    def _adapt_chart_toolbar(self):
+        if not hasattr(self, "_chart_toolbar_buttons"):
+            return
+        style = (Qt.ToolButtonStyle.ToolButtonIconOnly if self.width() / self._interface_scale < 700
+                 else Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        for button in self._chart_toolbar_buttons:
+            button.setToolButtonStyle(style)
+
     def resizeEvent(self,event):
         super().resizeEvent(event)
+        self._adapt_chart_toolbar()
         self._arrange_chart_editor()
 
     def _view_chart_data(self):
@@ -853,78 +883,10 @@ class GraphViewWidget(QWidget):
         self.labels_changed.emit()
 
     def _on_files_dropped(self, paths: list):
-        """Handle drag-and-drop of CSV/DAT/TXT directly onto graph canvas."""
-        data_paths = [p for p in paths if p.lower().endswith((".csv", ".tsv", ".txt", ".dat", ".xlsx"))]
-        if not data_paths:
-            return
-
-        msg = QMessageBox(self)
-        msg.setWindowTitle("Add dropped data")
-        msg.setText(f"You dropped {len(data_paths)} data file(s) onto this graph.\nHow would you like to open them?")
-        btn_layer = msg.addButton("Add to this graph", QMessageBox.ButtonRole.AcceptRole)
-        btn_sheet = msg.addButton("Open as worksheet", QMessageBox.ButtonRole.ActionRole)
-        msg.addButton(QMessageBox.StandardButton.Cancel)
-        msg.exec()
-
-        chosen = msg.clickedButton()
-        if chosen == btn_layer:
-            for p in data_paths:
-                self._import_file_as_curve_layer(p)
-            self.refresh_plot()
-            self.curves_changed.emit()
-        elif chosen == btn_sheet:
-            from omnigraph.ui.dialogs.import_dialog import ImportDialog
-            dlg = ImportDialog(initial_filepaths=data_paths, parent=self)
-            if dlg.exec():
-                win = self.window()
-                if hasattr(win, "_process_imported_results"):
-                    win._process_imported_results(dlg)
-
-    def _import_file_as_curve_layer(self, filepath: str):
-        import pandas as pd
-        try:
-            if filepath.lower().endswith(".xlsx"):
-                df = pd.read_excel(filepath)
-            else:
-                try:
-                    df = pd.read_csv(filepath)
-                except Exception:
-                    df = pd.read_csv(filepath, sep=None, engine="python")
-
-            base_name = os.path.splitext(os.path.basename(filepath))[0]
-            wb = self.project.workbooks[0] if self.project.workbooks else None
-            if not wb:
-                wb = self.project.add_workbook("Book1")
-            ws = wb.add_sheet(base_name)
-            ws.from_dataframe(df)
-
-            if ws.column_count() == 1:
-                # 1D single-column data: insert Row Numbers as column A(X)
-                col_y = ws.columns[0]
-                col_y.role = ColumnRole.Y
-                col_y.name = "B"
-                col_x = Column(name="A", long_name="Row Index", role=ColumnRole.X, data=list(range(1, len(col_y.data) + 1)))
-                ws.columns.insert(0, col_x)
-
-            if ws.column_count() >= 2:
-                c = CurveModel(
-                    source_workbook=wb.name,
-                    source_sheet=ws.name,
-                    x_col_idx=0,
-                    y_col_idx=1,
-                    label=ws.columns[1].display_label,
-                    plot_type=self.graph_model.plot_type,
-                    layer_index=len(self.graph_model.curves),
-                )
-                self.graph_model.add_curve(c)
-
-            win = self.window()
-            if hasattr(win, "explorer_widget") and hasattr(win.explorer_widget, "set_project"):
-                win.explorer_widget.set_project(self.project)
-        except Exception as e:
-            if "PYTEST_CURRENT_TEST" in os.environ:
-                raise
-            QMessageBox.warning(self, "Import Error", f"Could not import {filepath}:\n{e}")
+        """Open the standard import preview for files dropped onto a chart."""
+        window = self.window()
+        if hasattr(window, "_show_import_dialog"):
+            window._show_import_dialog(initial_filepaths=paths, target_graph=self.graph_model)
 
     def _on_point_mask_toggled(self, curve_label: str, row_idx: int):
         """Toggle mask/exclusion for a point in the dataset."""

@@ -93,7 +93,8 @@ def main():
         def begin_session():
             # A welcome dialog runs a nested event loop. Start update timers only
             # after it closes so an update dialog cannot interrupt onboarding.
-            if welcome_pending:
+            recovered = window.start_project_recovery(offer_restore=not (args.project_file or args.sample))
+            if welcome_pending and not recovered:
                 window.show_getting_started()
             QTimer.singleShot(2500, window.check_updates_in_background)
             window._periodic_update_timer = QTimer(window)

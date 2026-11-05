@@ -6,20 +6,17 @@ with auto-delimiter, smart header/unit detection, raw text pasting, and auto-com
 """
 
 import os
-import re
 from typing import Optional, List, Dict, Any
 import pandas as pd
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout, QComboBox,
+    QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QComboBox,
     QCheckBox, QLineEdit, QTextEdit, QTabWidget, QPushButton, QTableWidget,
-    QTableWidgetItem, QFileDialog, QDialogButtonBox, QMessageBox, QLabel,
-    QListWidget, QListWidgetItem, QGroupBox, QSplitter, QWidget, QHeaderView,
+    QTableWidgetItem, QFileDialog, QMessageBox, QLabel,
+    QListWidget, QListWidgetItem, QGroupBox, QWidget,
     QApplication, QToolButton, QMenu
 )
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QFont
 
-from omnigraph.core.worksheet import Worksheet, Column, ColumnRole
 from omnigraph.ai.data_extractor import SmartDataExtractor
 
 
@@ -36,6 +33,8 @@ class ImportDialog(QDialog):
         initial_filepaths: Optional[List[str]] = None,
         initial_text: Optional[str] = None,
         parent=None,
+        *,
+        active_graph_title: Optional[str] = None,
     ):
         super().__init__(parent)
         self.filepaths: List[str] = []
@@ -50,6 +49,8 @@ class ImportDialog(QDialog):
         self.destination_mode: str = "sheets"
         self.auto_plot: bool = False
         self.plot_type: str = "line_symbol"
+        self.active_graph_title = active_graph_title
+        self.add_to_active_graph = False
 
         self.setWindowTitle("Import data")
         self.resize(840, 600)
@@ -58,9 +59,8 @@ class ImportDialog(QDialog):
         self._init_ui()
 
         if initial_text:
-            self.txt_paste.setPlainText(initial_text)
             self.tabs_source.setCurrentIndex(1)
-            self._load_text_preview()
+            self.txt_paste.setPlainText(initial_text)
         elif self.filepaths:
             self._refresh_file_list()
 
@@ -110,23 +110,6 @@ class ImportDialog(QDialog):
         btn_browse.clicked.connect(self._browse_files)
         top_bar.addWidget(btn_browse)
 
-        btn_add = QPushButton("➕ Add More...")
-        btn_add.setToolTip("Add more files to the current batch list")
-        btn_add.clicked.connect(self._add_files)
-        top_bar.addWidget(btn_add)
-
-        btn_remove = QPushButton("🗑️ Remove")
-        btn_remove.setToolTip("Remove selected file from the list")
-        btn_remove.clicked.connect(self._remove_selected_file)
-        top_bar.addWidget(btn_remove)
-
-        btn_clear = QPushButton("Clear")
-        btn_clear.clicked.connect(self._clear_files)
-        top_bar.addWidget(btn_clear)
-
-        for button in (btn_add, btn_remove, btn_clear):
-            top_bar.removeWidget(button)
-            button.hide()
         file_actions = QToolButton()
         file_actions.setText("More")
         file_actions.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
@@ -153,31 +136,11 @@ class ImportDialog(QDialog):
         l_paste.setSpacing(6)
 
         paste_btn_bar = QHBoxLayout()
-        btn_paste_clip = QPushButton("📋 Paste Clipboard")
+        btn_paste_clip = QPushButton("Paste from clipboard")
         btn_paste_clip.setStyleSheet("font-weight: 600; padding: 4px 10px;")
         btn_paste_clip.clicked.connect(self._paste_clipboard)
         paste_btn_bar.addWidget(btn_paste_clip)
 
-        lbl_samples = QLabel("Sample Data:")
-        lbl_samples.setStyleSheet("font-weight: 600; padding-left: 6px;")
-        paste_btn_bar.addWidget(lbl_samples)
-
-        btn_sample_xrd = QPushButton("XRD Rocking (.x01)")
-        btn_sample_xrd.clicked.connect(self._load_sample_xrd)
-        paste_btn_bar.addWidget(btn_sample_xrd)
-
-        btn_sample_hplc = QPushButton("HPLC Log (.log)")
-        btn_sample_hplc.clicked.connect(self._load_sample_hplc)
-        paste_btn_bar.addWidget(btn_sample_hplc)
-
-        btn_sample_spec = QPushButton("Spectrometer (.txt)")
-        btn_sample_spec.clicked.connect(self._load_sample_spec)
-        paste_btn_bar.addWidget(btn_sample_spec)
-
-        paste_btn_bar.addStretch()
-        for widget in (lbl_samples, btn_sample_xrd, btn_sample_hplc, btn_sample_spec):
-            paste_btn_bar.removeWidget(widget)
-            widget.hide()
         examples = QToolButton()
         examples.setText("Try an example")
         examples.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
@@ -186,7 +149,8 @@ class ImportDialog(QDialog):
         examples_menu.addAction("Instrument log", self._load_sample_hplc)
         examples_menu.addAction("Spectrum", self._load_sample_spec)
         examples.setMenu(examples_menu)
-        paste_btn_bar.insertWidget(1, examples)
+        paste_btn_bar.addWidget(examples)
+        paste_btn_bar.addStretch()
         l_paste.addLayout(paste_btn_bar)
 
         self.txt_paste = QTextEdit()
@@ -266,7 +230,9 @@ class ImportDialog(QDialog):
 
         # Data Preview Table
         preview_header_row = QHBoxLayout()
-        self.lbl_preview_title = QLabel("<b>Data Preview (First 15 Rows):</b>")
+        self.lbl_preview_title = QLabel("Data preview")
+        self.lbl_preview_title.setTextFormat(Qt.TextFormat.PlainText)
+        self.lbl_preview_title.setWordWrap(True)
         preview_header_row.addWidget(self.lbl_preview_title)
         preview_header_row.addStretch()
         self.lbl_file_count_badge = QLabel("0 files selected")
@@ -276,6 +242,11 @@ class ImportDialog(QDialog):
         self.lbl_file_count_badge.setStyleSheet(f"color: {badge_color}; font-weight: bold;")
         preview_header_row.addWidget(self.lbl_file_count_badge)
         main_layout.addLayout(preview_header_row)
+        self.preview_details = QLabel("Choose a file or paste text to see a preview.")
+        self.preview_details.setTextFormat(Qt.TextFormat.PlainText)
+        self.preview_details.setWordWrap(True)
+        self.preview_details.setProperty("role", "muted")
+        main_layout.addWidget(self.preview_details)
 
         self.table_prev = QTableWidget()
         self.table_prev.setAlternatingRowColors(True)
@@ -300,8 +271,19 @@ class ImportDialog(QDialog):
         main_layout.addLayout(buttons_layout)
         from omnigraph.ui.dialogs.dialog_layout import fold_section, finish_dialog
         grp_batch.layout().removeWidget(self.chk_auto_plot)
-        self.chk_auto_plot.setText("Create a graph after importing")
+        self.chk_auto_plot.setText("Plot the imported data")
         main_layout.insertWidget(1, self.chk_auto_plot)
+        self.graph_destination = QComboBox()
+        self.graph_destination.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.graph_destination.setMinimumContentsLength(14)
+        self.graph_destination.addItem("Create a new chart", False)
+        if self.active_graph_title:
+            self.graph_destination.addItem(f"Add to {self.active_graph_title}", True)
+            self.graph_destination.setCurrentIndex(1)
+            main_layout.insertWidget(2, self.graph_destination)
+            self.chk_auto_plot.toggled.connect(self.graph_destination.setEnabled)
+        else:
+            self.graph_destination.hide()
         self.parsing_toggle, self.parsing_options = fold_section(grp_settings, "Adjust how data is read")
         self.destination_toggle, self.destination_options = fold_section(grp_batch, "Multiple-file and graph options")
         hint = QLabel("Choose files or paste text. Check the preview, then import. Headers and numbers are detected automatically on your computer.")
@@ -356,7 +338,7 @@ class ImportDialog(QDialog):
         for p in self.filepaths:
             size_kb = os.path.getsize(p) / 1024.0 if os.path.exists(p) else 0.0
             ext = os.path.splitext(p)[1].upper()
-            item = QListWidgetItem(f"📄 {os.path.basename(p)}  ({size_kb:.1f} KB) - {ext}")
+            item = QListWidgetItem(f"{os.path.basename(p)} · {size_kb:.1f} KB · {ext}")
             item.setToolTip(p)
             self.list_files.addItem(item)
 
@@ -364,23 +346,17 @@ class ImportDialog(QDialog):
         self.lbl_file_count_badge.setText(f"{count} file(s) selected")
         if count == 0:
             self.txt_path_display.setText("")
-            self.table_prev.setRowCount(0)
-            self.table_prev.setColumnCount(0)
-            self.btn_ok.setText("Import Data")
-            self.btn_ok.setEnabled(False)
+            self.filepath = ""
+            self._load_file_preview()
         elif count == 1:
             self.txt_path_display.setText(self.filepaths[0])
             self.list_files.setCurrentRow(0)
-            self.btn_ok.setText("Import 1 File")
-            self.btn_ok.setEnabled(True)
         else:
             names = ", ".join(os.path.basename(p) for p in self.filepaths[:3])
             if count > 3:
                 names += f" and {count - 3} more"
             self.txt_path_display.setText(f"{count} files: {names}")
             self.list_files.setCurrentRow(0)
-            self.btn_ok.setText(f"Batch Import {count} Files")
-            self.btn_ok.setEnabled(True)
 
     def _on_file_selection_changed(self, row: int):
         if 0 <= row < len(self.filepaths):
@@ -447,8 +423,8 @@ class ImportDialog(QDialog):
             "1200.0\t25\n"
             "1500.0\t19\n"
         )
+        self.tabs_source.setCurrentIndex(1)
         self.txt_paste.setPlainText(sample_xrd)
-        self._load_text_preview()
 
     def _load_sample_hplc(self):
         sample_log = (
@@ -472,15 +448,15 @@ class ImportDialog(QDialog):
             "5.0\t2.0\t0.4\t144.2\n"
             "6.0\t1.8\t0.3\t143.8\n"
         )
+        self.tabs_source.setCurrentIndex(1)
         self.txt_paste.setPlainText(sample_log)
-        self._load_text_preview()
 
     def _load_sample_spec(self):
         sample_spec = (
             "---------------------------------------------------\n"
             "Varian Cary 5000 UV-Vis-NIR Spectrophotometer\n"
             "Scan Speed: 600 nm/min, SBW: 2.0 nm\n"
-            "Operator: Kyle, Lab: Bio-Spectroscopy\n"
+            "Example: Synthetic spectroscopy data\n"
             "---------------------------------------------------\n"
             "Wavelength (nm) , Absorbance (OD) , Std_Error\n"
             "300.0 , 0.052 , 0.003\n"
@@ -497,113 +473,95 @@ class ImportDialog(QDialog):
             "550.0 , 0.075 , 0.002\n"
             "600.0 , 0.041 , 0.001\n"
         )
+        self.tabs_source.setCurrentIndex(1)
         self.txt_paste.setPlainText(sample_spec)
-        self._load_text_preview()
+
+    def _render_preview(self, result, title):
+        frame = result.dataframe
+        preview = frame.head(15)
+        self.imported_dataframe = frame
+        self.table_prev.setColumnCount(len(preview.columns))
+        self.table_prev.setHorizontalHeaderLabels([str(column) for column in preview.columns])
+        self.table_prev.setRowCount(len(preview))
+        for row in range(len(preview)):
+            for column in range(len(preview.columns)):
+                value = preview.iloc[row, column]
+                display = "" if pd.isna(value) else (f"{value:.5g}" if isinstance(value, float) else str(value))
+                self.table_prev.setItem(row, column, QTableWidgetItem(display))
+
+        metadata = result.metadata
+        self.lbl_preview_title.setText(f"{title} · {len(frame):,} rows × {len(frame.columns)} numeric columns")
+        row = metadata.get("HeaderRow", 1)
+        details = {
+            "first_row": f"Column names from row {row}.",
+            "two_rows": f"Names from row {row}, units from row {row + 1}.",
+            "none": "No header row. Column names were generated.",
+            "fallback": "The table was irregular. Numbers were extracted by line; check the preview before importing.",
+        }.get(metadata.get("HeaderMode"), "Column names follow the file format.")
+        if metadata.get("Sheet"):
+            details = f"Excel sheet: {metadata['Sheet']}. {details}"
+        invalid_count = metadata.get("InvalidNumericCount", 0)
+        if invalid_count:
+            details += f" {invalid_count:,} nonnumeric or nonfinite values will be blank."
+        dropped = metadata.get("DroppedColumns", [])
+        if dropped:
+            names = ", ".join(name[:30] for name in dropped[:3])
+            details += f" {len(dropped)} columns without numbers will be skipped ({names})."
+        if frame.empty:
+            details += " No numeric data to import."
+        self.preview_details.setText(details)
+        self.preview_details.setToolTip("\n".join(metadata.get("InvalidNumericExamples", [])))
+        self.btn_ok.setEnabled(not frame.empty or (self.tabs_source.currentIndex() == 0 and len(self.filepaths) > 1))
+        index = self.combo_plot_type.findText(result.recommended_plot)
+        if index >= 0:
+            self.combo_plot_type.setCurrentIndex(index)
+
+    def _clear_preview(self, message):
+        self.imported_dataframe = None
+        self.table_prev.setRowCount(0)
+        self.table_prev.setColumnCount(0)
+        self.lbl_preview_title.setText("Data preview")
+        self.preview_details.setText(message)
+        self.preview_details.setToolTip("")
+        self.btn_ok.setEnabled(False)
+
+    def _reading_options(self):
+        delimiter = self.combo_delim.currentData()
+        return {
+            "header_mode": self.combo_header.currentData(),
+            "delimiter_override": None if delimiter == "auto" else (r"\s+" if delimiter == "whitespace" else delimiter),
+        }
 
     def _load_text_preview(self):
-        """Extracts and previews data from pasted text."""
         raw_text = self.txt_paste.toPlainText().strip()
+        self.lbl_file_count_badge.setText("Pasted text")
+        self.btn_ok.setText("Import pasted data")
         if not raw_text:
-            self.table_prev.setRowCount(0)
-            self.table_prev.setColumnCount(0)
-            self.lbl_file_count_badge.setText("Pasted Text (Empty)")
-            self.btn_ok.setText("Import Data")
-            self.btn_ok.setEnabled(False)
+            self._clear_preview("Paste data to see a preview.")
             return
-
-        header_mode = self.combo_header.currentData()
-        delim_val = self.combo_delim.currentData()
-        delim_override = None if delim_val == "auto" else (r"\s+" if delim_val == "whitespace" else delim_val)
-
         try:
-            res = SmartDataExtractor.extract_from_text(
-                raw_text,
-                source_name="Pasted_Data",
-                header_mode=header_mode,
-                delimiter_override=delim_override,
-            )
-            df = res.dataframe.head(15)
-            self.imported_dataframe = res.dataframe
-
-            self.table_prev.setColumnCount(len(df.columns))
-            self.table_prev.setHorizontalHeaderLabels([str(c) for c in df.columns])
-            self.table_prev.setRowCount(len(df))
-
-            for r_i in range(len(df)):
-                for c_i in range(len(df.columns)):
-                    val = df.iloc[r_i, c_i]
-                    val_str = "" if pd.isna(val) else (f"{val:.5g}" if isinstance(val, float) else str(val))
-                    self.table_prev.setItem(r_i, c_i, QTableWidgetItem(val_str))
-
-            self.lbl_file_count_badge.setText("Pasted Text Active")
-            self.lbl_preview_title.setText(
-                f"<b>Data Preview for: Pasted Raw Text</b> "
-                f"<span style='color: #64748b;'>({len(res.dataframe)} rows × {len(res.dataframe.columns)} cols)</span>"
-            )
-            self.btn_ok.setText("Import Pasted Data")
-            self.btn_ok.setEnabled(True)
-
-            if res.recommended_plot:
-                idx = self.combo_plot_type.findText(res.recommended_plot)
-                if idx >= 0:
-                    self.combo_plot_type.setCurrentIndex(idx)
-
-        except Exception as e:
-            self.table_prev.setRowCount(0)
-            self.table_prev.setColumnCount(0)
-            self.lbl_preview_title.setText(f"<b>Preview Error:</b> {e}")
-            self.btn_ok.setEnabled(False)
+            result = SmartDataExtractor.extract_from_text(raw_text, source_name="Pasted_Data", **self._reading_options())
+            self._render_preview(result, "Pasted text")
+        except Exception as error:
+            self._clear_preview(f"Could not read pasted data: {error}")
 
     def _load_file_preview(self):
-        """Loads first 15 rows of the currently selected file."""
-        if not self.filepath or not os.path.exists(self.filepath):
+        count = len(self.filepaths)
+        self.lbl_file_count_badge.setText(f"{count} files" if count != 1 else "1 file")
+        self.btn_ok.setText(f"Import {count} files" if count > 1 else "Import file")
+        if not count or not self.filepath or not os.path.exists(self.filepath):
+            self._clear_preview("Choose a file to see a preview.")
             return
-
-        header_mode = self.combo_header.currentData()
-        delim_val = self.combo_delim.currentData()
-        delim_override = None if delim_val == "auto" else (r"\s+" if delim_val == "whitespace" else delim_val)
-
         try:
-            res = SmartDataExtractor.extract_from_file(
-                self.filepath,
-                header_mode=header_mode,
-                delimiter_override=delim_override,
-            )
-            df = res.dataframe.head(15)
-            self.imported_dataframe = res.dataframe
-
-            # Populate preview table
-            self.table_prev.setColumnCount(len(df.columns))
-            self.table_prev.setHorizontalHeaderLabels([str(c) for c in df.columns])
-            self.table_prev.setRowCount(len(df))
-
-            for r_i in range(len(df)):
-                for c_i in range(len(df.columns)):
-                    val = df.iloc[r_i, c_i]
-                    val_str = "" if pd.isna(val) else (f"{val:.5g}" if isinstance(val, float) else str(val))
-                    self.table_prev.setItem(r_i, c_i, QTableWidgetItem(val_str))
-
-            self.lbl_preview_title.setText(
-                f"<b>Data Preview for: {os.path.basename(self.filepath)}</b> "
-                f"<span style='color: #64748b;'>({len(res.dataframe)} rows × {len(res.dataframe.columns)} cols)</span>"
-            )
-
-            if res.recommended_plot:
-                idx = self.combo_plot_type.findText(res.recommended_plot)
-                if idx >= 0:
-                    self.combo_plot_type.setCurrentIndex(idx)
-
-        except Exception as e:
-            self.table_prev.setRowCount(0)
-            self.table_prev.setColumnCount(0)
-            self.lbl_preview_title.setText(f"<b>Preview Error:</b> {e}")
+            result = SmartDataExtractor.extract_from_file(self.filepath, **self._reading_options())
+            self._render_preview(result, os.path.basename(self.filepath))
+        except Exception as error:
+            self._clear_preview(f"Could not read the selected file: {error}")
+            self.btn_ok.setEnabled(count > 1)
 
     def _on_accept(self):
         """Processes either pasted raw text or selected files for import."""
-        header_mode = self.combo_header.currentData()
-        delim_val = self.combo_delim.currentData()
-        delim_override = None if delim_val == "auto" else (r"\s+" if delim_val == "whitespace" else delim_val)
-
+        reading_options = self._reading_options()
         self.imported_results.clear()
 
         # Check if user is importing from Pasted Text tab
@@ -616,8 +574,7 @@ class ImportDialog(QDialog):
                 res = SmartDataExtractor.extract_from_text(
                     raw_text,
                     source_name="Pasted_Data",
-                    header_mode=header_mode,
-                    delimiter_override=delim_override,
+                    **reading_options,
                 )
                 if res.dataframe.empty:
                     QMessageBox.warning(self, "No Data", "No numeric columns could be extracted from the text.")
@@ -650,8 +607,7 @@ class ImportDialog(QDialog):
                 try:
                     res = SmartDataExtractor.extract_from_file(
                         p,
-                        header_mode=header_mode,
-                        delimiter_override=delim_override,
+                        **reading_options,
                     )
                     if res.dataframe.empty:
                         errors.append(f"No numeric data extracted from {os.path.basename(p)}")
@@ -687,5 +643,6 @@ class ImportDialog(QDialog):
         self.destination_mode = self.combo_dest.currentData()
         self.auto_plot = self.chk_auto_plot.isChecked()
         self.plot_type = self.combo_plot_type.currentText()
+        self.add_to_active_graph = self.auto_plot and self.graph_destination.currentData() is True
 
         self.accept()

@@ -313,6 +313,7 @@ class SmartDataExtractor:
 
         except Exception:
             # Fallback line-by-line regex parsing
+            effective_header_mode = "fallback"
             df = cls._fallback_parse_lines(data_lines)
 
         # 4. Clean column names and extract units
@@ -324,12 +325,7 @@ class SmartDataExtractor:
                 elif k not in col_units:
                     col_units[k] = u
 
-        # 5. Clean numeric values
-        for col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-        # Drop columns that are completely empty / NaN
-        df = df.dropna(how="all", axis=1)
+        df = cls._clean_numeric_columns(df, metadata)
 
         # 6. Infer Column Roles (X, Y, Y_ERR)
         col_roles = cls._infer_column_roles(df, col_long_names)
@@ -344,6 +340,7 @@ class SmartDataExtractor:
         }.get(effective_header_mode, effective_header_mode)
 
         metadata["HeaderMode"] = effective_header_mode
+        metadata["HeaderRow"] = data_start_idx + 1
 
         return ExtractionResult(
             dataframe=df,
@@ -357,54 +354,73 @@ class SmartDataExtractor:
 
     @classmethod
     def _extract_from_excel(cls, filepath: str, header_mode: str = "auto") -> ExtractionResult:
-        """Extracts data from Excel file with automatic header row detection."""
-        excel_file = pd.ExcelFile(filepath)
-        sheet_name = excel_file.sheet_names[0]
-        df_raw = excel_file.parse(sheet_name, header=None)
+        """Read the first Excel sheet, honoring the selected header option."""
+        with pd.ExcelFile(filepath) as excel_file:
+            sheet_name = excel_file.sheet_names[0]
+            df = excel_file.parse(sheet_name, header=None)
+        header_row = 0
+        if header_mode == "auto" and not df.empty:
+            for row in range(min(15, len(df))):
+                if df.iloc[row].notna().sum() >= max(2, len(df.columns) * 0.5):
+                    header_row = row
+                    break
+            values = df.iloc[header_row].dropna().tolist()
+            numbers = sum(isinstance(value, (int, float)) for value in values)
+            header_mode = "none" if not values or numbers / len(values) >= 0.5 else "first_row"
+        if df.empty:
+            return ExtractionResult(df, {}, {}, {}, notes="The first Excel sheet is empty.")
 
         if header_mode == "none":
-            df = df_raw
             df.columns = [f"Col {chr(65 + i) if i < 26 else i + 1}" for i in range(len(df.columns))]
         else:
-            # Find first row with majority non-empty entries
-            header_row = 0
-            for r in range(min(15, len(df_raw))):
-                row_vals = df_raw.iloc[r].dropna().tolist()
-                if len(row_vals) >= max(2, len(df_raw.columns) * 0.5):
-                    header_row = r
-                    break
-
-            # If header_mode is auto, verify row is not pure numbers
-            if header_mode == "auto":
-                row_vals = df_raw.iloc[header_row].dropna().tolist()
-                num_count = sum(1 for v in row_vals if isinstance(v, (int, float)))
-                if row_vals and (num_count / len(row_vals)) >= 0.5:
-                    # Pure numeric data!
-                    df = excel_file.parse(sheet_name, header=None)
-                    df.columns = [f"Col {chr(65 + i) if i < 26 else i + 1}" for i in range(len(df.columns))]
-                else:
-                    df = excel_file.parse(sheet_name, header=header_row)
-            else:
-                df = excel_file.parse(sheet_name, header=header_row)
+            names = df.iloc[header_row].tolist()
+            units = df.iloc[header_row + 1].tolist() if header_mode == "two_rows" and len(df) > header_row + 1 else []
+            labels = []
+            for index, name in enumerate(names):
+                label = f"Column {index + 1}" if pd.isna(name) else str(name).strip()
+                if units and not pd.isna(units[index]) and str(units[index]).strip():
+                    label += f" [{str(units[index]).strip('[]() ')}]"
+                unique = label
+                suffix = 2
+                while unique in labels:
+                    unique = f"{label} ({suffix})"
+                    suffix += 1
+                labels.append(unique)
+            df = df.iloc[header_row + (2 if units else 1):].reset_index(drop=True)
+            df.columns = labels
 
         df, col_units, col_long_names = cls._parse_headers_and_units(df)
-
-        for col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-        df = df.dropna(how="all", axis=1)
-
+        metadata = {"Sheet": sheet_name, "Source": filepath, "HeaderMode": header_mode, "HeaderRow": header_row + 1}
+        df = cls._clean_numeric_columns(df, metadata)
         col_roles = cls._infer_column_roles(df, col_long_names)
-        rec_plot = cls._recommend_plot(df, col_roles)
 
         return ExtractionResult(
             dataframe=df,
             column_roles=col_roles,
             column_units=col_units,
             column_long_names=col_long_names,
-            recommended_plot=rec_plot,
-            metadata={"Sheet": sheet_name, "Source": filepath},
+            recommended_plot=cls._recommend_plot(df, col_roles),
+            metadata=metadata,
             notes=f"Excel import from sheet '{sheet_name}'.",
         )
+
+    @staticmethod
+    def _clean_numeric_columns(df: pd.DataFrame, metadata: dict) -> pd.DataFrame:
+        """Record nonempty values that become blank, including those in dropped columns."""
+        invalid_count = 0
+        examples = []
+        for column in df.columns:
+            raw = df[column]
+            numeric = pd.to_numeric(raw, errors="coerce").replace([np.inf, -np.inf], np.nan)
+            invalid = raw.notna() & numeric.isna()
+            invalid_count += int(invalid.sum())
+            for row in np.flatnonzero(invalid.to_numpy())[:max(0, 3 - len(examples))]:
+                examples.append(f"{str(column)[:32]}, data row {row + 1}: {str(raw.iloc[row])[:30]!r}")
+            df[column] = numeric
+        metadata["InvalidNumericCount"] = invalid_count
+        metadata["InvalidNumericExamples"] = examples
+        metadata["DroppedColumns"] = [str(column) for column in df.columns[df.isna().all()]]
+        return df.dropna(how="all", axis=1)
 
     @classmethod
     def _extract_from_json(cls, filepath: str) -> ExtractionResult:
@@ -425,10 +441,8 @@ class SmartDataExtractor:
             df = pd.DataFrame()
 
         df, col_units, col_long_names = cls._parse_headers_and_units(df)
-        for col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-        df = df.dropna(how="all", axis=1)
+        metadata = {"Format": "JSON"}
+        df = cls._clean_numeric_columns(df, metadata)
         col_roles = cls._infer_column_roles(df, col_long_names)
         rec_plot = cls._recommend_plot(df, col_roles)
 
@@ -438,7 +452,7 @@ class SmartDataExtractor:
             column_units=col_units,
             column_long_names=col_long_names,
             recommended_plot=rec_plot,
-            metadata={"Format": "JSON"},
+            metadata=metadata,
             notes=f"JSON structured extraction ({len(df)} rows).",
         )
 

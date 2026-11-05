@@ -9,7 +9,6 @@ from omnigraph.ui.dialogs.import_dialog import ImportDialog
 from omnigraph.ui.dialogs.add_curve_dialog import AddCurveDialog
 from omnigraph.ui.dialogs.quick_labels_dialog import QuickLabelsDialog
 from omnigraph.ui.dialogs.legend_dialog import LegendEditorDialog
-from omnigraph.ui.dialogs.ai_extractor_dialog import AIDataExtractorDialog
 from omnigraph.ui.dialogs.update_dialog import UpdateDialog
 
 __all__ = [
@@ -24,6 +23,5 @@ __all__ = [
     "AddCurveDialog",
     "QuickLabelsDialog",
     "LegendEditorDialog",
-    "AIDataExtractorDialog",
     "UpdateDialog",
 ]

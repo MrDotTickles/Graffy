@@ -7,13 +7,14 @@ Property Inspector dock, plotting actions, fitting wizards, and sample datasets.
 import os
 import inspect
 import uuid
+from pathlib import Path
 from typing import Optional, Dict
 from PyQt6.QtWidgets import (
     QMainWindow, QTabWidget, QDockWidget, QToolBar, QToolButton,
     QMenu, QMessageBox, QFileDialog, QInputDialog, QLabel,
     QStatusBar, QApplication, QWidget, QSizePolicy, QStackedWidget, QVBoxLayout, QPushButton, QComboBox, QHBoxLayout
 )
-from PyQt6.QtCore import Qt, pyqtSlot, QSize, QSettings
+from PyQt6.QtCore import Qt, pyqtSlot, QSize, QSettings, QLockFile, QStandardPaths, QTimer
 from PyQt6.QtGui import QAction, QKeySequence, QIcon, QShortcut, QPalette, QColor
 
 from omnigraph.core.project import Project, GraphModel, CurveModel, ReportModel
@@ -26,7 +27,7 @@ from omnigraph.ui.property_dock import PropertyInspectorWidget
 from omnigraph.ui.dialogs import (
     FitDialog, PeakAnalysisDialog, SmoothDialog, StatsDialog,
     ExportDialog, ImportDialog, FormulaDialog, AddCurveDialog,
-    QuickLabelsDialog, AIDataExtractorDialog
+    QuickLabelsDialog
 )
 from omnigraph.ui.samples import SampleProjects
 from omnigraph.ui.styles.design import icon, refresh_icons
@@ -116,6 +117,9 @@ class MainWindow(QMainWindow):
         self.chart_workflow_button.setToolTip("Create a chart from worksheet data")
         self.chart_workflow_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         chart_menu = QMenu(self.chart_workflow_button)
+        self.chart_selection_note = chart_menu.addAction("")
+        self.chart_selection_note.setEnabled(False)
+        chart_menu.addSeparator()
         for text, kind in [("Scatter plot", "scatter"), ("Line plot", "line"),
                            ("Line with symbols", "line_symbol"), ("Bar chart", "bar")]:
             chart_menu.addAction(text, lambda checked=False, k=kind: self.create_plot(k))
@@ -176,7 +180,21 @@ class MainWindow(QMainWindow):
         has_data = bool(worksheet and any(any(v is not None and str(v).strip() for v in c.data)
                                           for c in worksheet.columns))
         self.chart_workflow_button.setEnabled(has_data)
-        self.chart_workflow_button.setToolTip("Select worksheet columns to create a chart" if has_data else "Open a worksheet with data first")
+        summary = "Open a worksheet with data first"
+        if has_data:
+            pairs = worksheet.plot_column_pairs(widget.get_selected_column_indexes())
+            if pairs:
+                labels = [
+                    f"{worksheet.columns[x].display_label[:24]} → {worksheet.columns[y].display_label[:24]}"
+                    for x, y in pairs[:2]
+                ]
+                summary = "  ·  ".join(labels)
+                if len(pairs) > 2:
+                    summary += f"  +{len(pairs) - 2} more"
+            else:
+                summary = "Select a Y column to plot"
+        self.chart_selection_note.setText(summary.replace("&", "&&"))
+        self.chart_workflow_button.setToolTip(summary)
         self.analyze_workflow_button.setEnabled(has_data or bool(graph and graph.curves))
         self.export_workflow_action.setEnabled(bool(graph and graph.curves))
         if graph:
@@ -189,14 +207,84 @@ class MainWindow(QMainWindow):
     def _project_snapshot(self):
         import json
         from omnigraph.core.project import NumpyEncoder
-        return json.dumps({"name": self.project.name,
-                           "workbooks": [item.to_dict() for item in self.project.workbooks],
-                           "graphs": [item.to_dict() for item in self.project.graphs],
-                           "reports": [item.to_dict() for item in self.project.reports]},
-                          sort_keys=True, cls=NumpyEncoder)
+        return json.dumps(self.project.to_dict(), sort_keys=True, cls=NumpyEncoder)
 
     def _remember_saved_state(self):
         self._saved_snapshot = self._project_snapshot()
+        self._clear_recovery()
+
+    def start_project_recovery(self, *, offer_restore: bool = True) -> bool:
+        """Keep one local crash recovery copy, protected from other app instances."""
+        location = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)
+        if not location:
+            return False
+        folder = Path(location) / "Recovery"
+        try:
+            folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+        except OSError:
+            return False
+        lock = QLockFile(str(folder / "recovery.lock"))
+        lock.setStaleLockTime(0)
+        if not lock.tryLock(0):
+            return False
+
+        path = folder / "Unsaved.kgraph"
+        restored = False
+        if path.is_file():
+            if not offer_restore:
+                return False
+            choice = QMessageBox.question(
+                self, "Recover unsaved work?",
+                "Graffy found a local recovery copy from a previous session. Open it as an unsaved project?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Yes,
+            )
+            try:
+                if choice == QMessageBox.StandardButton.Yes:
+                    project = Project.load_from_file(str(path))
+                    project.filepath = None
+                    self.project = project
+                    self.setWindowTitle(f"Graffy - {project.name} (Recovered)")
+                    self._populate_all_views()
+                    self.status_bar.showMessage("Recovered project. Save it to keep your work.", 8000)
+                    restored = True
+                elif choice == QMessageBox.StandardButton.Discard:
+                    path.unlink()
+                else:
+                    return False
+            except (OSError, ValueError, TypeError, AttributeError):
+                QMessageBox.warning(self, "Recovery copy unavailable", "Graffy could not read or remove the recovery copy.")
+                return False
+
+        self._recovery_lock = lock
+        self._recovery_path = path
+        self._recovery_snapshot = self._project_snapshot() if restored else None
+        self._recovery_timer = QTimer(self)
+        self._recovery_timer.setInterval(60_000)
+        self._recovery_timer.timeout.connect(self._write_recovery)
+        self._recovery_timer.start()
+        return restored
+
+    def _write_recovery(self):
+        try:
+            snapshot = self._project_snapshot()
+            if snapshot == self._saved_snapshot:
+                self._clear_recovery()
+            elif snapshot != self._recovery_snapshot:
+                self.project.save_to_file(self._recovery_path, remember_path=False)
+                self._recovery_snapshot = snapshot
+        except (OSError, ValueError, TypeError):
+            # A recovery write failure must not interrupt the user's work.
+            return
+
+    def _clear_recovery(self):
+        path = getattr(self, "_recovery_path", None)
+        if path is not None:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            self._recovery_snapshot = None
 
     def _confirm_pending_changes(self):
         if not getattr(self, "_guided_workspace", False):
@@ -216,6 +304,12 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         if self._confirm_pending_changes():
+            self._clear_recovery()
+            timer = getattr(self, "_recovery_timer", None)
+            if timer is not None:
+                timer.stop()
+                self._recovery_lock.unlock()
+                self._recovery_path = None
             super().closeEvent(event)
         else:
             event.ignore()
@@ -224,7 +318,7 @@ class MainWindow(QMainWindow):
         from PyQt6.QtCore import QSettings
         from omnigraph.ui.dialogs.welcome_dialog import WelcomeDialog
         settings = QSettings("Graffy", "Graffy")
-        dialog = WelcomeDialog(self)
+        dialog = WelcomeDialog(self, recent_projects=self._load_recent_projects())
         dialog.show_again.setChecked(settings.value("ui/show_welcome", True, type=bool))
         dialog.exec()
         settings.setValue("ui/show_welcome", dialog.show_again.isChecked())
@@ -236,6 +330,8 @@ class MainWindow(QMainWindow):
             self.import_data()
         elif dialog.choice == "open":
             self.open_project()
+        elif dialog.choice == "recent":
+            self.open_recent_project(dialog.recent_path)
         elif dialog.choice == "new":
             self.new_project()
 
@@ -253,28 +349,28 @@ class MainWindow(QMainWindow):
     def _adapt_workspace_toolbar(self):
         if not hasattr(self,"workspace_save_action"):
             return
-        compact = self.width() < 700
+        effective_width = self.width() / self.interface_scale
+        compact = effective_width < 700
         for button in (self.data_workflow_button,self.chart_workflow_button,self.analyze_workflow_button):
             button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly if compact else Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        if self.width()<1000:
+        if effective_width < 1000:
             self.analyze_workflow_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        self.brand_action.setVisible(self.width()>=1000)
+        self.brand_action.setVisible(effective_width >= 1000)
         self.workspace_undo_action.setVisible(not compact)
         self.workspace_redo_action.setVisible(not compact)
         self.workspace_help_action.setVisible(not compact)
         self.quick_start_toolbar.widgetForAction(self.workspace_save_action).setToolButtonStyle(
-            Qt.ToolButtonStyle.ToolButtonIconOnly if self.width()<1000 else Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            Qt.ToolButtonStyle.ToolButtonIconOnly if effective_width < 1000 else Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.quick_start_toolbar.widgetForAction(self.export_workflow_action).setToolButtonStyle(
             Qt.ToolButtonStyle.ToolButtonIconOnly if compact else Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+
+        visible = getattr(self, "_navigator_user_choice", effective_width >= 1000)
+        self.dock_explorer.setVisible(visible)
+        self.navigator_action.setChecked(visible)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._adapt_workspace_toolbar()
-        if getattr(self, "_guided_workspace", False):
-            visible = getattr(self, "_navigator_user_choice", self.width() >= 1000)
-            self.dock_explorer.setVisible(visible)
-            if hasattr(self, "navigator_action"):
-                self.navigator_action.setChecked(visible)
 
     def _on_tabs_moved(self, *_):
         # Metadata follows widgets, rather than stale positions after dragging tabs.
@@ -296,9 +392,7 @@ class MainWindow(QMainWindow):
             paths = [u.toLocalFile() for u in urls if u.toLocalFile() and os.path.exists(u.toLocalFile())]
             if paths:
                 event.acceptProposedAction()
-                dlg = ImportDialog(initial_filepaths=paths, parent=self)
-                if dlg.exec():
-                    self._process_imported_results(dlg)
+                self._show_import_dialog(initial_filepaths=paths)
                 return
         super().dropEvent(event)
 
@@ -312,8 +406,10 @@ class MainWindow(QMainWindow):
         # 1. Central Workspace Tabs
         self.center_tabs = QTabWidget(self)
         self.center_tabs.setObjectName("WorkspaceTabs")
+        self.center_tabs.setObjectName("WorkspaceTabs")
         self.center_tabs.setDocumentMode(True)
         self.center_tabs.tabBar().setUsesScrollButtons(True)
+        self.center_tabs.tabBar().setDrawBase(False)
         self.center_tabs.setTabsClosable(True)
         self.center_tabs.setMovable(True)
         self.center_tabs.tabBar().tabMoved.connect(self._on_tabs_moved)
@@ -376,7 +472,7 @@ class MainWindow(QMainWindow):
         self.explorer_widget.item_activated.connect(self._on_explorer_item_activated)
         self.explorer_widget.request_new_graph.connect(self.new_graph)
         self.explorer_widget.request_new_sheet.connect(self.new_sheet)
-        self.explorer_widget.request_ai_extract.connect(self.open_ai_extractor_dialog)
+        self.explorer_widget.request_import_into_chart.connect(self.import_into_chart)
         self.explorer_widget.request_new_project.connect(self.new_project)
         self.explorer_widget.request_open_project.connect(self.open_project)
         self.explorer_widget.request_save_project.connect(self.save_project)
@@ -485,7 +581,7 @@ class MainWindow(QMainWindow):
 
         # --- Plot Menu ---
         menu_plot = menubar.addMenu("&Plot")
-        self._add_action(menu_plot, "Import data into a graph...", self.open_ai_extractor_dialog, "Ctrl+Shift+I")
+        self._add_action(menu_plot, "Import data into a graph...", self.import_into_chart, "Ctrl+Shift+I")
         self._add_action(menu_plot, "Scatter Plot", lambda: self.create_plot("scatter"))
         self._add_action(menu_plot, "Line Plot", lambda: self.create_plot("line"))
         self._add_action(menu_plot, "Line + Symbol", lambda: self.create_plot("line_symbol"))
@@ -627,7 +723,7 @@ class MainWindow(QMainWindow):
         btn_import.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         i_menu = QMenu(btn_import)
         i_menu.addAction("Import Data File(s)... (CSV, Excel, TXT, DAT)", self.import_data)
-        i_menu.addAction("Import data into a graph...", self.open_ai_extractor_dialog)
+        i_menu.addAction("Import data into a graph...", self.import_into_chart)
         i_menu.addSeparator()
         samples_sub = i_menu.addMenu("📚 Load Scientific Sample...")
         samples_sub.addAction("UV-Vis Spectroscopy (3 Peaks)", lambda: self.load_sample("spectroscopy"))
@@ -826,8 +922,6 @@ class MainWindow(QMainWindow):
         self._last_active_sheet_widget=None
         for view in old_views:
             view.hide()
-            if isinstance(view,GraphViewWidget):
-                view.editor_dialog.hide()
             view.deleteLater()
 
         for wb in self.project.workbooks:
@@ -870,7 +964,9 @@ class MainWindow(QMainWindow):
         gw.request_curve_fit.connect(self.open_fit_wizard)
         gw.labels_changed.connect(self._on_graph_labels_changed)
         gw.curves_changed.connect(self._on_graph_curves_changed)
+        gw.request_replace_data.connect(lambda duplicate: self.replace_chart_data(graph, duplicate))
         gw.request_jump_to_sheet.connect(lambda s, w: self._on_explorer_item_activated("sheet", s, w))
+        gw.set_interface_scale(self.interface_scale)
         if hasattr(self, "zoom_level") and self.zoom_level != 1.0:
             gw.set_zoom(self.zoom_level)
         idx = self.center_tabs.addTab(gw, icon("chart"), graph.title)
@@ -921,8 +1017,6 @@ class MainWindow(QMainWindow):
         _,name,_,view=self.tab_metadata[index]
         if getattr(self,"_last_active_sheet_widget",None) is view:
             self._last_active_sheet_widget=None
-        if isinstance(view,GraphViewWidget):
-            view.editor_dialog.hide()
         self.center_tabs.removeTab(index)
         self.tab_metadata.pop(index,None)
         self._on_tabs_moved()
@@ -1203,6 +1297,9 @@ class MainWindow(QMainWindow):
         if gw:
             self.property_widget.set_active_graph(gw.graph_model)
             self.explorer_widget.set_project(self.project)
+        for item_type, _, _, view in self.tab_metadata.values():
+            if item_type == "sheet":
+                view.update_linked_graphs(self.project.graphs)
 
     def open_add_layer_dialog(self):
         gw = self.get_active_graph_widget()
@@ -1395,24 +1492,34 @@ class MainWindow(QMainWindow):
     def save_project_as(self):
         path, _ = QFileDialog.getSaveFileName(self, "Save Graffy Project", f"{self.project.name}.kgraph", "Graffy Project (*.kgraph)")
         if path:
+            previous_name = self.project.name
             try:
                 self.project.name = os.path.splitext(os.path.basename(path))[0]
                 self.project.save_to_file(path)
+            except Exception as e:
+                self.project.name = previous_name
+                QMessageBox.critical(self, "Save Failed", str(e))
+                return
+            else:
                 self._remember_saved_state()
                 self.setWindowTitle(f"Graffy - {self.project.name}")
                 self.explorer_widget.update_header()
                 self._add_recent_project(path)
                 self.status_bar.showMessage(f"Project saved to {path}", 3000)
-            except Exception as e:
-                QMessageBox.critical(self, "Save Failed", str(e))
 
     def import_data(self):
         """Opens universal data import dialog with single or multi-file batch support."""
-        dlg = ImportDialog(parent=self)
-        if dlg.exec():
-            self._process_imported_results(dlg)
+        self._show_import_dialog()
 
-    def _process_imported_results(self, dlg: ImportDialog):
+    def _show_import_dialog(self, *, initial_filepaths=None, target_graph=None):
+        dialog = ImportDialog(
+            initial_filepaths=initial_filepaths, parent=self,
+            active_graph_title=target_graph.title if target_graph else None,
+        )
+        if dialog.exec():
+            self._process_imported_results(dialog, target_graph=target_graph if dialog.add_to_active_graph else None)
+
+    def _process_imported_results(self, dlg: ImportDialog, target_graph=None):
         """Processes single or multi-file batch import results from ImportDialog."""
         results = getattr(dlg, "imported_results", [])
         if not results:
@@ -1494,61 +1601,76 @@ class MainWindow(QMainWindow):
         if auto_plot and imported_sheets:
             first_name = results[0]["name"]
             graph_title = f"Comparison - {len(results)} Files" if len(results) > 1 else f"Plot - {first_name}"
-            created_graph = GraphModel(title=graph_title, title_text=graph_title)
+            created_graph = target_graph or GraphModel(title=graph_title, title_text=graph_title, plot_type=plot_type)
+            initial_curve_count = len(created_graph.curves)
 
             # Palette colors
             from omnigraph.graphing.themes import get_theme_palette
             palette = get_theme_palette("Origin Classic")
 
-            for idx, (ws, wb_name) in enumerate(imported_sheets):
-                x_col_idx = 0
-                for c_i, c in enumerate(ws.columns):
-                    if c.role == ColumnRole.X:
-                        x_col_idx = c_i
-                        break
-
-                y_col_indices = [c_i for c_i, c in enumerate(ws.columns) if c.role == ColumnRole.Y]
-                if not y_col_indices and len(ws.columns) > 1:
-                    y_col_indices = [1]
-
-                if y_col_indices:
-                    y_col_idx = y_col_indices[0]
-                    c_color = palette[idx % len(palette)]
-                    curve = CurveModel(
+            for ws, wb_name in imported_sheets:
+                ws.add_row_index_for_single_column()
+                pairs = ws.plot_column_pairs()
+                if len(imported_sheets) > 1:
+                    pairs = pairs[:1]  # One representative series per file for comparison charts.
+                for x_col_idx, y_col_idx in pairs:
+                    error = ws.find_y_error_column_for(y_col_idx)
+                    created_graph.add_curve(CurveModel(
                         source_workbook=wb_name,
                         source_sheet=ws.name,
                         x_col_idx=x_col_idx,
                         y_col_idx=y_col_idx,
-                        label=ws.name,
-                        color=c_color,
-                        plot_type=plot_type,
-                    )
-                    created_graph.curves.append(curve)
+                        y_err_col_idx=error,
+                        label=ws.name if len(pairs) == 1 else ws.columns[y_col_idx].display_label,
+                        color=palette[len(created_graph.curves) % len(palette)],
+                        plot_type="errorbar" if error is not None else plot_type,
+                    ))
 
-            if created_graph.curves:
+            if len(created_graph.curves) == initial_curve_count:
+                created_graph = None
+            elif target_graph is None:
                 self.project.graphs.append(created_graph)
 
-        self._populate_all_views()
+        for worksheet, workbook_name in imported_sheets:
+            self._on_explorer_item_activated("sheet", worksheet.name, workbook_name)
+        self.explorer_widget.set_project(self.project)
 
         if created_graph:
             self._on_explorer_item_activated("graph", created_graph.title, created_graph.id)
+            self.refresh_active_graph()
+            self._on_graph_curves_changed()
         elif imported_sheets:
             first_ws, first_wb = imported_sheets[0]
             self._on_explorer_item_activated("sheet", first_ws.name, first_wb)
 
         self.status_bar.showMessage(f"Successfully imported {len(results)} data file(s)!", 4000)
 
-    def open_ai_extractor_dialog(self):
-        active_graph = self.get_active_graph()
-        dlg = AIDataExtractorDialog(self.project, active_graph=active_graph, parent=self)
-        if dlg.exec():
-            self._populate_all_views()
-            if dlg.created_graph:
-                self._on_explorer_item_activated("graph", dlg.created_graph.title, dlg.created_graph.id)
-            elif dlg.created_worksheet:
-                wb_name = self.project.workbooks[0].name if self.project.workbooks else "Book1"
-                self._on_explorer_item_activated("sheet", dlg.created_worksheet.name, wb_name)
-            self.status_bar.showMessage("Data imported into graph.", 4000)
+    def import_into_chart(self):
+        self._show_import_dialog(target_graph=self.get_active_graph())
+
+    def replace_chart_data(self, graph, duplicate=False):
+        from omnigraph.core.plot_editing import rebind_chart_data
+        from omnigraph.ui.dialogs.replace_data_dialog import ReplaceDataDialog
+
+        dialog = ReplaceDataDialog(self.project, graph, duplicate=duplicate, parent=self)
+        if not dialog.exec():
+            return
+        copy_title = None
+        if duplicate:
+            base_title = f"{graph.title} (copy)"
+            copy_title = base_title
+            index = 2
+            while self.project.get_graph(copy_title):
+                copy_title = f"{base_title} {index}"
+                index += 1
+        result = rebind_chart_data(graph, dialog.mappings, copy_title=copy_title)
+        if duplicate:
+            self.project.graphs.append(result)
+            self._on_explorer_item_activated("graph", result.title, result.id)
+        else:
+            self.refresh_active_graph()
+        self._on_graph_curves_changed()
+        self.status_bar.showMessage("Chart copy created" if duplicate else "Chart data replaced", 4000)
 
     def export_active_graph(self):
         gw = self.get_active_graph_widget()
@@ -1716,8 +1838,11 @@ class MainWindow(QMainWindow):
         self.interface_scale_combo.blockSignals(False)
         for i in range(self.center_tabs.count()):
             view=self.center_tabs.widget(i)
-            if not isinstance(view,GraphViewWidget) and hasattr(view,"set_zoom"):
-                view.set_zoom(self.zoom_level*self.interface_scale)
+            if isinstance(view, GraphViewWidget):
+                view.set_interface_scale(self.interface_scale)
+            elif hasattr(view, "set_zoom"):
+                view.set_zoom(self.zoom_level * self.interface_scale)
+        self._adapt_workspace_toolbar()
         if persist:
             QSettings("Graffy","Graffy").setValue("ui/interface_scale",self.interface_scale)
 
@@ -1802,14 +1927,7 @@ class MainWindow(QMainWindow):
         self._on_explorer_item_activated("graph", g.title, g.id)
 
     def create_plot(self, plot_type: str):
-        """
-        Intuitive Origin-style Plotting:
-        Reads active worksheet selection.
-        - If user selected multiple Y columns (or X and multiple Y columns), plots all of them simultaneously!
-        - If user has multiple Y columns in the sheet and no single specific Y column was isolated, plots all Y columns!
-        - Automatically pairs each Y column with its preceding/matching X column.
-        - Assigns distinct palette colors and displays the key (legend).
-        """
+        """Create a chart from the resolved worksheet selection."""
         ws = self.get_active_worksheet()
         if not ws:
             QMessageBox.warning(self, "No Data", "No active worksheet found.")
@@ -1824,26 +1942,11 @@ class MainWindow(QMainWindow):
                 wb_name = wb.name
                 break
 
-        # Discover all Y columns and X columns in the worksheet
-        all_y_indices = [i for i, c in enumerate(ws.columns) if c.role == ColumnRole.Y]
-        all_x_indices = [i for i, c in enumerate(ws.columns) if c.role == ColumnRole.X]
-        default_x_idx = all_x_indices[0] if all_x_indices else 0
-
-        # Determine target Y columns to plot:
-        if selected_cols:
-            sel_non_x = [i for i in selected_cols if ws.get_column(i) and ws.get_column(i).role != ColumnRole.X]
-            if not sel_non_x and all_y_indices:
-                target_y_indices = all_y_indices
-            elif len(sel_non_x) >= 2:
-                target_y_indices = sel_non_x
-            elif len(selected_cols) == 1 and ws.get_column(selected_cols[0]).role == ColumnRole.Y:
-                target_y_indices = [selected_cols[0]]
-            elif all_y_indices:
-                target_y_indices = all_y_indices
-            else:
-                target_y_indices = [1] if ws.column_count() > 1 else [0]
-        else:
-            target_y_indices = all_y_indices if all_y_indices else ([1] if ws.column_count() > 1 else [0])
+        pairs = ws.plot_column_pairs(selected_cols)
+        if not pairs:
+            QMessageBox.information(self, "Choose Data to Plot", "Select at least one Y column to create a chart.")
+            return
+        target_y_indices = [y for _, y in pairs]
 
         # Create new Graph
         graph_title = f"Graph{len(self.project.graphs) + 1}"
@@ -1856,15 +1959,11 @@ class MainWindow(QMainWindow):
         primary_x_idx = None
 
         # Build curves for each target Y column
-        for curve_idx, col_idx in enumerate(target_y_indices):
+        for curve_idx, (x_idx, col_idx) in enumerate(pairs):
             col = ws.get_column(col_idx)
             if not col:
                 continue
 
-            # Find matching X column
-            x_idx = ws.find_x_column_for(col_idx)
-            if x_idx is None:
-                x_idx = default_x_idx
             if primary_x_idx is None:
                 primary_x_idx = x_idx
 
@@ -1889,21 +1988,6 @@ class MainWindow(QMainWindow):
 
             graph.add_curve(curve)
 
-        # Fallback if no curves were added
-        if not graph.curves and len(ws.columns) > 1:
-            c1 = ws.get_column(1)
-            curve = CurveModel(
-                source_workbook=wb_name,
-                source_sheet=ws.name,
-                x_col_idx=default_x_idx,
-                y_col_idx=1,
-                label=c1.display_label if c1 else "Data",
-                color=palette[0],
-                plot_type=plot_type,
-            )
-            graph.add_curve(curve)
-            primary_x_idx = default_x_idx
-
         # Set axis titles from columns
         if primary_x_idx is not None:
             xcol = ws.get_column(primary_x_idx)
@@ -1927,8 +2011,8 @@ class MainWindow(QMainWindow):
             graph.legend_show = True
 
         self.project.graphs.append(graph)
-        self._populate_all_views()
         self._on_explorer_item_activated("graph", graph.title, graph.id)
+        self._on_graph_curves_changed()
 
     def create_waterfall_plot(self):
         """Creates a stacked waterfall plot with auto-stagger offsets for analytical/spectroscopy series."""
@@ -1946,15 +2030,10 @@ class MainWindow(QMainWindow):
                 wb_name = wb.name
                 break
 
-        all_y_indices = [i for i, c in enumerate(ws.columns) if c.role == ColumnRole.Y]
-        all_x_indices = [i for i, c in enumerate(ws.columns) if c.role == ColumnRole.X]
-        default_x_idx = all_x_indices[0] if all_x_indices else 0
-
-        target_y_indices = []
-        if selected_cols:
-            target_y_indices = [i for i in selected_cols if ws.get_column(i) and ws.get_column(i).role != ColumnRole.X]
-        if not target_y_indices:
-            target_y_indices = all_y_indices if all_y_indices else ([1] if ws.column_count() > 1 else [0])
+        pairs = ws.plot_column_pairs(selected_cols)
+        if not pairs:
+            QMessageBox.information(self, "Choose Data to Plot", "Select at least one Y column to create a chart.")
+            return
 
         graph_title = f"Waterfall {len(self.project.graphs) + 1}"
         graph = GraphModel(
@@ -1970,13 +2049,10 @@ class MainWindow(QMainWindow):
         palette = get_theme_palette(graph.theme or "Origin Classic")
 
         primary_x_idx = None
-        for curve_idx, col_idx in enumerate(target_y_indices):
+        for curve_idx, (x_idx, col_idx) in enumerate(pairs):
             col = ws.get_column(col_idx)
             if not col:
                 continue
-            x_idx = ws.find_x_column_for(col_idx)
-            if x_idx is None:
-                x_idx = default_x_idx
             if primary_x_idx is None:
                 primary_x_idx = x_idx
 
@@ -1997,8 +2073,8 @@ class MainWindow(QMainWindow):
         graph.y_title = "Intensity / Absorbance (Offset)"
 
         self.project.graphs.append(graph)
-        self._populate_all_views()
         self._on_explorer_item_activated("graph", graph.title, graph.id)
+        self._on_graph_curves_changed()
         self.status_bar.showMessage(f"Created Stacked Waterfall plot with {len(graph.curves)} curves!", 4000)
 
     def create_multipanel_figure(self, layout_mode: str = "grid_2x2"):
@@ -2020,15 +2096,10 @@ class MainWindow(QMainWindow):
                 wb_name = wb.name
                 break
 
-        all_y_indices = [i for i, c in enumerate(ws.columns) if c.role == ColumnRole.Y]
-        all_x_indices = [i for i, c in enumerate(ws.columns) if c.role == ColumnRole.X]
-        default_x_idx = all_x_indices[0] if all_x_indices else 0
-
-        target_y_indices = []
-        if selected_cols:
-            target_y_indices = [i for i in selected_cols if ws.get_column(i) and ws.get_column(i).role != ColumnRole.X]
-        if not target_y_indices:
-            target_y_indices = all_y_indices if all_y_indices else ([1] if ws.column_count() > 1 else [0])
+        pairs = ws.plot_column_pairs(selected_cols)
+        if not pairs:
+            QMessageBox.information(self, "Choose Data to Plot", "Select at least one Y column to create a chart.")
+            return
 
         graph_title = f"Figure {len(self.project.graphs) + 1} ({layout_mode})"
         graph = GraphModel(title=graph_title, plot_type="line_symbol", layout_mode=layout_mode, sync_axes=True)
@@ -2039,13 +2110,10 @@ class MainWindow(QMainWindow):
         n_panels = 4 if layout_mode in ("grid_2x2", "figure_1") else 2
 
         primary_x_idx = None
-        for i, col_idx in enumerate(target_y_indices):
+        for i, (x_idx, col_idx) in enumerate(pairs):
             col = ws.get_column(col_idx)
             if not col:
                 continue
-            x_idx = ws.find_x_column_for(col_idx)
-            if x_idx is None:
-                x_idx = default_x_idx
             if primary_x_idx is None:
                 primary_x_idx = x_idx
             y_err_idx = ws.find_y_error_column_for(col_idx)
@@ -2085,8 +2153,8 @@ class MainWindow(QMainWindow):
             graph.y_title = ws.get_column(target_y_indices[0]).display_label
 
         self.project.graphs.append(graph)
-        self._populate_all_views()
         self._on_explorer_item_activated("graph", graph.title, graph.id)
+        self._on_graph_curves_changed()
         self.status_bar.showMessage(f"Created Multi-Panel {layout_mode} layout with {len(graph.curves)} curves!", 4000)
 
 

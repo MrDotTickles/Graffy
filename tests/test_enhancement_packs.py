@@ -343,13 +343,30 @@ class TestThemesAndPalettes:
 # ============================================================================
 
 class TestUIDragDropAndCanvas:
-    def test_graph_view_import_file_as_curve_layer(self, qapp):
-        from omnigraph.ui.graph_view import GraphViewWidget
+    @staticmethod
+    def drop_file(project, graph, path, monkeypatch):
+        from omnigraph.ui.dialogs.import_dialog import ImportDialog
+        from omnigraph.ui.main_window import MainWindow
+
+        window = MainWindow(project)
+        window._on_explorer_item_activated("graph", graph.title, graph.id)
+        previews = []
+
+        def accept_preview(dialog):
+            previews.append(dialog.btn_ok.isEnabled())
+            if previews[-1]:
+                dialog._on_accept()
+            return dialog.result()
+
+        monkeypatch.setattr(ImportDialog, "exec", accept_preview)
+        window.get_active_graph_widget()._on_files_dropped([path])
+        return previews
+
+    def test_graph_view_import_file_as_curve_layer(self, qapp, monkeypatch):
 
         proj = Project.create_default("DropTest")
         graph = GraphModel(title="DropTestGraph")
         proj.graphs.append(graph)
-        gw = GraphViewWidget(graph, proj)
 
         # Create temporary CSV file
         with tempfile.NamedTemporaryFile(suffix=".csv", mode="w", delete=False) as f:
@@ -358,7 +375,7 @@ class TestUIDragDropAndCanvas:
 
         try:
             assert len(graph.curves) == 0
-            gw._import_file_as_curve_layer(temp_path)
+            assert self.drop_file(proj, graph, temp_path, monkeypatch) == [True]
             assert len(graph.curves) == 1
             c = graph.curves[0]
             base_expected = os.path.splitext(os.path.basename(temp_path))[0]
@@ -560,20 +577,18 @@ class TestUIDragDropAndCanvas:
         assert pi.spn_x_offset.value() == -3.0
         assert pi.combo_plot_type.currentText() == "violin"
 
-    def test_drag_drop_1d_dataset(self, qapp):
+    def test_drag_drop_1d_dataset(self, qapp, monkeypatch):
         """Verify dropping a 1-column CSV automatically constructs Row Index X and adds layer."""
-        from omnigraph.ui.graph_view import GraphViewWidget
         proj = Project(name="Drop1DProj")
         graph = GraphModel(title="Drop1DGraph")
         proj.graphs.append(graph)
-        gw = GraphViewWidget(graph, proj)
 
         with tempfile.NamedTemporaryFile(suffix=".csv", mode="w", delete=False) as f:
             f.write("Absorbance\n0.12\n0.24\n0.48\n0.96\n")
             temp_path = f.name
 
         try:
-            gw._import_file_as_curve_layer(temp_path)
+            assert self.drop_file(proj, graph, temp_path, monkeypatch) == [True]
             assert len(graph.curves) == 1
             # Verify sheet has 2 columns: Row Index (X) and Absorbance (Y)
             ws = proj.workbooks[0].sheets[-1]
@@ -606,21 +621,18 @@ class TestUIDragDropAndCanvas:
         assert dlg.table_stats.item(0, 0).text() == "0"
         assert dlg.table_stats.item(0, 1).text() == "-"
 
-    def test_drag_drop_corrupted_empty_file_with_multipanel_layout(self, qapp):
+    def test_drag_drop_corrupted_empty_file_with_multipanel_layout(self, qapp, monkeypatch):
         """Verify dropping an empty/corrupted CSV onto a 2x2 layout handles error safely."""
-        from omnigraph.ui.graph_view import GraphViewWidget
         proj = Project.create_default("EmptyDropProj")
         graph = GraphModel(title="2x2 Layout", layout_mode="grid_2x2")
         proj.graphs.append(graph)
-        gw = GraphViewWidget(graph, proj)
 
         with tempfile.NamedTemporaryFile(suffix=".csv", mode="w", delete=False) as f:
             # Empty file (0 bytes)
             temp_empty = f.name
 
         try:
-            with pytest.raises(Exception):
-                gw._import_file_as_curve_layer(temp_empty)
+            assert self.drop_file(proj, graph, temp_empty, monkeypatch) == [False]
             # Ensure graph and layout remain intact
             assert graph.layout_mode == "grid_2x2"
             assert len(graph.curves) == 0

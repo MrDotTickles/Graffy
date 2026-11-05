@@ -30,7 +30,6 @@ from omnigraph.ui.samples import SampleProjects
 from omnigraph.ui.main_window import MainWindow
 from omnigraph.ui.dialogs import (
     AddCurveDialog,
-    AIDataExtractorDialog,
     ColumnPropertiesDialog,
     ExportDialog,
     FitDialog,
@@ -143,10 +142,10 @@ def test_dialog_add_curve_init_and_bounds(qapp, sample_project):
     dlg.close()
 
 
-def test_dialog_ai_extractor_init_and_bounds(qapp, sample_project):
+def test_chart_import_dialog_init_and_bounds(qapp, sample_project):
     graph = sample_project.graphs[0]
-    dlg = AIDataExtractorDialog(sample_project, graph)
-    assert_no_widget_clipping(dlg, "AIDataExtractorDialog")
+    dlg = ImportDialog(active_graph_title=graph.title)
+    assert_no_widget_clipping(dlg, "Chart import")
     assert_pixmap_valid(dlg)
     dlg.close()
 
@@ -236,7 +235,7 @@ def test_all_12_dialogs_pixmap_render(qapp, sample_project, plot_manager):
     graph = sample_project.graphs[0]
     dialog_list = [
         ("AddCurve", AddCurveDialog(sample_project, graph)),
-        ("AIDataExtractor", AIDataExtractorDialog(sample_project, graph)),
+        ("Chart import", ImportDialog(active_graph_title=graph.title)),
         ("ColumnProperties", ColumnPropertiesDialog(ws.columns[0])),
         ("Export", ExportDialog(plot_manager)),
         ("Fit", FitDialog(sample_project, graph, ws)),

@@ -38,7 +38,7 @@ def test_resizing_never_opens_editor_window(qt_test_application):
         view.txt_quick_title.setText('Keep this draft')
         for width in (1200,640,1050,400,1200):
             view.resize(width,700);qt_test_application.processEvents()
-            assert not view.editor_dialog.isVisible()
+            assert not view.chart_settings.isWindow()
             assert view.chart_settings.parentWidget() is view.chart_splitter
             assert view.chart_settings.isVisible()==opened
             assert view.txt_quick_title.text()=='Keep this draft'

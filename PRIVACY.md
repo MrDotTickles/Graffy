@@ -4,7 +4,7 @@ Graffy processes imported files, formulas, fitting and statistics on your comput
 
 Projects contain the data you import, graph settings, formulas and reports. Save and share them deliberately. Exported CSV, spreadsheets and figures contain the content you choose to export. Reports, figure labels and document metadata may include text you entered. Do not upload confidential projects, screenshots or logs to a public support issue.
 
-The app stores preferences and recently opened file paths locally through Qt's platform settings storage (for example the Windows registry). Downloaded updates are cached locally until installed or removed. Local settings, your Projects folder and caches are not included in the packaged downloads.
+The app stores preferences and recently opened file paths locally through Qt's platform settings storage (for example the Windows registry). Downloaded updates are cached locally until installed or removed. While you work, Graffy can keep one local crash recovery copy of an unsaved project in its application data folder. That copy can include imported data. Graffy offers to restore it after an interruption and normally clears it when you save or discard the project. Local settings, your Projects folder and caches are not included in the packaged downloads.
 
 ## Network access
 

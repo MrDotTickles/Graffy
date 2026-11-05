@@ -5,6 +5,8 @@ Manages entire workspace state: Workbooks, Sheets, Graphs, Annotations, and Fit 
 
 import json
 import os
+from pathlib import Path
+import tempfile
 import uuid
 from typing import List, Dict, Any, Optional
 import numpy as np
@@ -464,18 +466,33 @@ class Project:
                 return g
         return None
 
-    def save_to_file(self, filepath: str):
-        """Save project as JSON .kgraph file."""
-        data = {
+    def to_dict(self) -> Dict[str, Any]:
+        return {
             "version": "1.0",
             "name": self.name,
             "workbooks": [wb.to_dict() for wb in self.workbooks],
             "graphs": [g.to_dict() for g in self.graphs],
             "reports": [r.to_dict() for r in self.reports],
         }
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, cls=NumpyEncoder)
-        self.filepath = filepath
+    def save_to_file(self, filepath: str, *, remember_path: bool = True):
+        """Replace the project only after a complete write in the same folder."""
+        destination = Path(filepath).resolve()
+        temporary_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", dir=destination.parent,
+                prefix=".graffy-save-", suffix=".tmp", delete=False,
+            ) as stream:
+                temporary_path = Path(stream.name)
+                json.dump(self.to_dict(), stream, indent=2, cls=NumpyEncoder)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary_path, destination)
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+        if remember_path:
+            self.filepath = filepath
 
     save_project = save_to_file
 

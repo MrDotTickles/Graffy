@@ -1,5 +1,5 @@
 """
-Automated tests for AI Data Extractor & Smart Plotter.
+Tests for instrument parsing and the import workflow.
 Verifies smart ingestion of raw messy text, scientific instrument logs,
 automatic delimiter/header/unit parsing, role inference, and auto-plotting.
 """
@@ -11,12 +11,11 @@ from PyQt6.QtWidgets import QApplication
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
-from omnigraph.ai.data_extractor import SmartDataExtractor, ExtractionResult
+from omnigraph.ai.data_extractor import SmartDataExtractor
 from omnigraph.core.worksheet import ColumnRole
 from omnigraph.core.project import Project
-from omnigraph.ui.dialogs.ai_extractor_dialog import AIDataExtractorDialog
+from omnigraph.ui.dialogs.import_dialog import ImportDialog
 from omnigraph.ui.main_window import MainWindow
-from omnigraph.ui.samples import SampleProjects
 
 
 @pytest.fixture(scope="session")
@@ -99,27 +98,15 @@ def test_extraction_from_file_with_whitespace_delimiters(tmp_path):
     assert result.column_units["Temp(C)"] == "C"
 
 
-def test_ai_extractor_dialog_workflow(qapp):
-    """Verify complete dialog workflow: loading messy HPLC data and 1-click import and plot."""
-    project = Project.create_default("AIDialogTest")
-    dlg = AIDataExtractorDialog(project)
-
-    # Load sample HPLC log
-    dlg._load_sample_hplc()
-
-    assert dlg.extraction_result is not None
-    assert not dlg.extraction_result.dataframe.empty
-    assert len(dlg.extraction_result.dataframe) == 13
-
-    # Trigger Import & Plot
-    dlg._on_import_and_plot()
-
-    assert dlg.created_worksheet is not None
-    assert len(project.workbooks[0].sheets) >= 2  # Default sheet + new extracted sheet
-    assert dlg.created_graph is not None
-    assert len(dlg.created_graph.curves) >= 1
-
-    dlg.close()
+def test_instrument_log_preview_and_plot(qapp):
+    window = MainWindow(Project.create_default("Instrument log"))
+    dialog = ImportDialog(parent=window)
+    dialog._load_sample_hplc()
+    assert not dialog.imported_dataframe.empty
+    dialog._on_accept()
+    window._process_imported_results(dialog)
+    assert len(window.project.workbooks[0].sheets) == 2
+    assert window.get_active_graph().curves
 
 
 def test_pure_numeric_data_does_not_eat_first_row():
@@ -163,44 +150,14 @@ def test_two_header_rows_names_and_units():
 
 
 def test_header_mode_dropdown_interaction(qapp):
-    """Verify changing header mode combobox in dialog re-runs extraction and updates table."""
-    project = Project.create_default("HeaderModeTest")
-    dlg = AIDataExtractorDialog(project)
-
-    raw_nums = "10.0, 20.0\n30.0, 40.0\n50.0, 60.0"
-    dlg.tabs_source.setCurrentIndex(1)
-    dlg.txt_paste.setPlainText(raw_nums)
-
-    # Auto-detect should recognize it as pure data (none)
-    dlg._run_extraction()
-    assert len(dlg.extraction_result.dataframe) == 3
-    assert dlg.extraction_result.metadata["HeaderMode"] == "none"
-
-    # User explicitly forces first row as names
-    dlg.combo_header_mode.setCurrentIndex(1)  # "first_row"
-    assert len(dlg.extraction_result.dataframe) == 2
-    assert dlg.extraction_result.metadata["HeaderMode"] == "first_row"
-
-    # Switch back to none
-    dlg.combo_header_mode.setCurrentIndex(3)  # "none"
-    assert len(dlg.extraction_result.dataframe) == 3
-
-    dlg.close()
-
-
-
-def test_main_window_ai_integration(qapp):
-    """Verify MainWindow has AI actions in menus and toolbars."""
-    project = SampleProjects.create_spectroscopy_sample()
-    window = MainWindow(project=project)
-    window.show()
-
-    # Verify AI Extract action exists on toolbar
-    from PyQt6.QtWidgets import QToolBar
-    tb_data = window.findChild(QToolBar, "ToolbarFileData")
-    assert tb_data is not None
-    action_texts = [act.text() for act in tb_data.actions()]
-    window.close()
+    dialog = ImportDialog(initial_text="10.0,20.0\n30.0,40.0\n50.0,60.0")
+    assert len(dialog.imported_dataframe) == 3
+    assert "No header row" in dialog.preview_details.text()
+    dialog.combo_header.setCurrentIndex(dialog.combo_header.findData("first_row"))
+    assert len(dialog.imported_dataframe) == 2
+    assert "Column names from row 1" in dialog.preview_details.text()
+    dialog.combo_header.setCurrentIndex(dialog.combo_header.findData("none"))
+    assert len(dialog.imported_dataframe) == 3
 
 
 def test_x01_ascii_rocking_curve_extraction(tmp_path):
@@ -305,93 +262,12 @@ def test_x01_binary_format_extraction(tmp_path):
     assert result.dataframe[x_col].iloc[1] == -490.0
 
 
-def test_ai_dialog_sample_xrd_rocking_curve(qapp):
-    """Verify 1-click loading and plotting of sample XRD rocking curve in AIDataExtractorDialog."""
-    project = Project.create_default("XRDTestProject")
-    dlg = AIDataExtractorDialog(project)
-
-    # Click sample XRD rocking curve button
-    dlg._load_sample_xrd()
-
-    assert dlg.extraction_result is not None
-    assert not dlg.extraction_result.dataframe.empty
-    assert "Omega (arcsec)" in dlg.extraction_result.dataframe.columns
-    assert "Intensity (Counts)" in dlg.extraction_result.dataframe.columns
-    assert dlg.combo_plot_type.currentText() == "line"
-
-    # Execute Import & Plot
-    dlg._on_import_and_plot()
-    assert dlg.created_worksheet is not None
-    assert dlg.created_graph is not None
-    assert len(dlg.created_graph.curves) >= 1
-    assert dlg.created_graph.curves[0].plot_type == "line"
-
-    dlg.close()
-
-
-def test_pure_numeric_data_does_not_eat_first_row():
-    """Verify that pure numeric data with no headers preserves row 0 and names columns cleanly."""
-    raw_csv = (
-        "1.0, 2.5\n"
-        "2.0, 5.0\n"
-        "3.0, 7.5\n"
-        "4.0, 10.0\n"
-    )
-    result = SmartDataExtractor.extract_from_text(raw_csv, source_name="NumericOnly.csv")
-
-    assert not result.dataframe.empty
-    # Must preserve ALL 4 rows! Row 0 was NOT eaten as column names!
-    assert len(result.dataframe) == 4
-    assert result.dataframe.iloc[0, 0] == 1.0
-    assert result.dataframe.iloc[0, 1] == 2.5
-    assert result.dataframe.columns[0] == "Col A"
-    assert result.dataframe.columns[1] == "Col B"
-    assert result.metadata["HeaderMode"] == "none"
-
-
-def test_two_header_rows_names_and_units():
-    """Verify extraction when file has row 0 as names and row 1 as units."""
-    raw_data = (
-        "Wavelength\tAbsorbance\tError\n"
-        "nm\ta.u.\tOD\n"
-        "400.0\t0.15\t0.01\n"
-        "500.0\t0.45\t0.02\n"
-        "600.0\t0.85\t0.03\n"
-    )
-    result = SmartDataExtractor.extract_from_text(raw_data, source_name="TwoRows.txt")
-
-    assert not result.dataframe.empty
-    assert len(result.dataframe) == 3
-    assert result.dataframe.columns[0] == "Wavelength"
-    assert result.dataframe.columns[1] == "Absorbance"
-    assert result.column_units["Wavelength"] == "nm"
-    assert result.column_units["Absorbance"] == "a.u."
-    assert result.metadata["HeaderMode"] == "two_rows"
-
-
-def test_header_mode_dropdown_interaction(qapp):
-    """Verify changing header mode combobox in dialog re-runs extraction and updates table."""
-    project = Project.create_default("HeaderModeTest")
-    dlg = AIDataExtractorDialog(project)
-
-    raw_nums = "10.0, 20.0\n30.0, 40.0\n50.0, 60.0"
-    dlg.tabs_source.setCurrentIndex(1)
-    dlg.txt_paste.setPlainText(raw_nums)
-
-    # Auto-detect should recognize it as pure data (none)
-    dlg._run_extraction()
-    assert len(dlg.extraction_result.dataframe) == 3
-    assert dlg.extraction_result.metadata["HeaderMode"] == "none"
-
-    # User explicitly forces first row as names
-    dlg.combo_header_mode.setCurrentIndex(1)  # "first_row"
-    assert len(dlg.extraction_result.dataframe) == 2
-    assert dlg.extraction_result.metadata["HeaderMode"] == "first_row"
-
-    # Switch back to none
-    dlg.combo_header_mode.setCurrentIndex(3)  # "none"
-    assert len(dlg.extraction_result.dataframe) == 3
-
-    dlg.close()
-
-
+def test_xrd_sample_preview_and_plot(qapp):
+    window = MainWindow(Project.create_default("XRD sample"))
+    dialog = ImportDialog(parent=window)
+    dialog._load_sample_xrd()
+    assert "Omega (arcsec)" in dialog.imported_dataframe.columns
+    assert "Intensity (Counts)" in dialog.imported_dataframe.columns
+    dialog._on_accept()
+    window._process_imported_results(dialog)
+    assert window.get_active_graph().curves[0].plot_type == "line"
