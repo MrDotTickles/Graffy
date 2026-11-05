@@ -242,3 +242,62 @@ def test_main_window_edit_menu_undo_redo(qapp):
     assert ws.columns[0].data[0] == 555.0
 
     window.close()
+
+
+
+def test_worksheet_row_menu_and_unselect_workflow(qapp, monkeypatch):
+    from PyQt6.QtCore import QItemSelectionModel
+    from PyQt6.QtWidgets import QInputDialog, QMessageBox, QPushButton
+
+    ws = Worksheet.create_default(num_rows=4)
+    ws.columns[0].data = [1, 2, 3, 4]
+    sw = SpreadsheetWidget(ws)
+    sw.enable_guided_sheet()
+    assert any(button.text() == "Rows" for button in sw.findChildren(QPushButton))
+    row_actions = {action.text(): action for action in sw.rows_menu.actions()}
+    assert sw.model.rowCount() == 4
+    sw.table_view.setCurrentIndex(sw.model.index(2, 0))
+    row_actions["Insert Row Above"].trigger()
+    assert ws.columns[0].data == [1, 2, None, 3, 4]
+    sw.undo()
+    assert sw.model.rowCount() == 4
+
+    sw.table_view.setCurrentIndex(sw.model.index(0, 0))
+    sw.table_view.selectionModel().select(sw.model.index(2, 1), QItemSelectionModel.SelectionFlag.Select)
+    monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.No)
+    row_actions["Delete Selected Rows"].trigger()
+    assert ws.columns[0].data == [1, 2, 3, 4]
+    monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.Yes)
+    row_actions["Delete Selected Rows"].trigger()
+    assert ws.columns[0].data == [2, 4]
+    assert sw.model.rowCount() == 2
+    sw.undo()
+    assert ws.columns[0].data == [1, 2, 3, 4]
+    sw.redo()
+    assert sw.sheet_summary.text().startswith("2 rows")
+
+    monkeypatch.setattr(QInputDialog, "getInt", lambda *args: (0, True))
+    row_actions["Set Row Count…"].trigger()
+    assert ws.row_count() == 0
+    assert sw.model.rowCount() == 1
+    assert sw.model.setData(sw.model.index(0, 0), "9")
+    assert sw.sheet_summary.text().startswith("1 row")
+
+    sw.table_view.setCurrentIndex(sw.model.index(0, 0))
+    mask_actions = sw.btn_mask.menu().actions()
+    mask_actions[0].trigger()
+    assert ws.is_cell_masked(0, 0)
+    assert "Unselect" in mask_actions[1].text()
+    mask_actions[1].trigger()
+    assert not ws.is_cell_masked(0, 0)
+    sw.undo()
+    assert ws.is_cell_masked(0, 0)
+    sw.undo()
+    sw.undo()
+    assert ws.row_count() == 0
+
+    monkeypatch.setattr(QInputDialog, "getInt", lambda *args: (3, True))
+    row_actions["Add Rows at End…"].trigger()
+    assert sw.model.rowCount() == 3
+    sw._fill_col(0, "seq")
+    assert ws.columns[0].data == [1, 2, 3]

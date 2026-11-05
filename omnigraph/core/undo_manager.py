@@ -20,6 +20,7 @@ class CellEditCommand(QUndoCommand):
         self.row = row
         self.col_idx = col_idx
         self.old_val = old_val
+        self.old_length = len(col.data) if col is not None else 0
         self.new_val = new_val
         self.callback = callback
 
@@ -33,7 +34,10 @@ class CellEditCommand(QUndoCommand):
     def undo(self):
         col = self.worksheet.get_column(self.col_idx)
         if col:
-            col.set_value(self.row, self.old_val)
+            if self.row >= self.old_length:
+                del col.data[self.old_length:]
+            else:
+                col.set_value(self.row, self.old_val)
         if self.callback:
             self.callback()
 

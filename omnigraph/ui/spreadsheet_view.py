@@ -9,6 +9,7 @@ import os
 import inspect
 import copy
 import re
+from itertools import groupby
 from typing import Optional, List, Dict, Any
 import numpy as np
 from PyQt6.QtWidgets import (
@@ -40,8 +41,8 @@ class WorksheetTableModel(QAbstractTableModel):
         self.undo_stack = undo_stack
 
     def rowCount(self, parent=QModelIndex()) -> int:
-        # Show at least 35 rows so table doesn't look cut off
-        return max(self.worksheet.row_count(), 35)
+        # An empty sheet has one editable entry row.
+        return max(self.worksheet.row_count(), 1)
 
     def columnCount(self, parent=QModelIndex()) -> int:
         return self.worksheet.column_count()
@@ -118,6 +119,12 @@ class WorksheetTableModel(QAbstractTableModel):
         if parsed_val == old_val:
             return False
 
+        def notify_edit():
+            cell = self.index(row_idx, col_idx)
+            if row_idx == 0:
+                self.headerDataChanged.emit(Qt.Orientation.Vertical, 0, 0)
+            self.dataChanged.emit(cell, cell, [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole])
+
         if self.undo_stack is not None:
             cmd = CellEditCommand(
                 self.worksheet,
@@ -125,12 +132,12 @@ class WorksheetTableModel(QAbstractTableModel):
                 col_idx,
                 old_val,
                 parsed_val,
-                callback=lambda: self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole]),
+                callback=notify_edit,
             )
             self.undo_stack.push(cmd)
         else:
             col.set_value(row_idx, parsed_val)
-            self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole])
+            notify_edit()
 
         return True
 
@@ -164,7 +171,9 @@ class WorksheetTableModel(QAbstractTableModel):
 
         elif orientation == Qt.Orientation.Vertical:
             if role == Qt.ItemDataRole.DisplayRole:
-                return str(section + 1)
+                return str(section + 1) if self.worksheet.row_count() else "+"
+            if role == Qt.ItemDataRole.ToolTipRole and not self.worksheet.row_count():
+                return "Type or paste into this row to start entering data."
 
         return None
 
@@ -266,6 +275,7 @@ class SpreadsheetWidget(QWidget):
         self.worksheet = worksheet
         self.undo_stack = QUndoStack(self)
         self.model = WorksheetTableModel(worksheet, undo_stack=self.undo_stack)
+        self.model.dataChanged.connect(lambda: self.data_modified.emit())
 
         self._init_ui()
 
@@ -284,6 +294,15 @@ class SpreadsheetWidget(QWidget):
         self.toolbar.setMovable(False)
         self.toolbar.setFloatable(False)
         self.toolbar.setStyleSheet("QToolBar { border: none; padding: 2px 4px; background: transparent; }")
+
+        self.rows_menu = QMenu(self)
+        self.rows_menu.setTitle("Rows")
+        self._add_row_actions(self.rows_menu)
+        self.btn_rows = QToolButton(self)
+        self.btn_rows.setText("Rows")
+        self.btn_rows.setMenu(self.rows_menu)
+        self.btn_rows.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.rows_toolbar_action = self.toolbar.addWidget(self.btn_rows)
 
         # Column editing tools placed directly above the sheet data columns
         self.act_sheet_add_col = self.toolbar.addAction("+ Col", self.add_column)
@@ -320,14 +339,11 @@ class SpreadsheetWidget(QWidget):
 
         # Point / Cell Masking
         self.btn_mask = QToolButton()
-        self.btn_mask.setText("🎯 Mask (M) ▾")
-        self.btn_mask.setToolTip("Data Point Masking & Outlier Exclusion: Exclude spurious points from regression and fits (Hotkey: M)")
+        self.btn_mask.setText("Masking")
+        self.btn_mask.setToolTip("Exclude cells from analysis or include them again")
         self.btn_mask.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         m_menu = QMenu(self.btn_mask)
-        m_menu.addAction("🎯 Mask Selected Cells [M]", self.mask_selection)
-        m_menu.addAction("✨ Unmask Selected Cells", self.unmask_selection)
-        m_menu.addSeparator()
-        m_menu.addAction("Unmask All Cells in Worksheet", self.clear_all_masks)
+        self._add_mask_actions(m_menu)
         self.btn_mask.setMenu(m_menu)
         self.toolbar.addWidget(self.btn_mask)
 
@@ -378,7 +394,11 @@ class SpreadsheetWidget(QWidget):
         self.table_view.setAlternatingRowColors(True)
         self.table_view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table_view.horizontalHeader().setDefaultSectionSize(145)
-        self.table_view.verticalHeader().setDefaultSectionSize(29)
+        row_header = self.table_view.verticalHeader()
+        row_header.setDefaultSectionSize(29)
+        row_header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        row_header.customContextMenuRequested.connect(self._on_row_context_menu)
+        row_header.setToolTip("Right-click a row number to insert or delete rows")
         self.table_view.horizontalHeader().setMinimumSectionSize(60)
         self.table_view.horizontalHeader().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table_view.horizontalHeader().customContextMenuRequested.connect(self._on_header_context_menu)
@@ -412,6 +432,10 @@ class SpreadsheetWidget(QWidget):
         self.sheet_summary.setProperty("role","muted")
         row.addWidget(self.sheet_summary)
         row.addStretch()
+        rows_button = QPushButton("Rows", header)
+        rows_button.setMenu(self.rows_menu)
+        row.addWidget(rows_button)
+        self.rows_toolbar_action.setVisible(False)
         self.sheet_tools_toggle = QPushButton("Column tools")
         self.sheet_tools_toggle.setIcon(icon("edit"))
         self.sheet_tools_toggle.setCheckable(True)
@@ -449,7 +473,11 @@ class SpreadsheetWidget(QWidget):
         if hasattr(self,"starter_panel"):
             has_data = any(any(v is not None and str(v).strip() for v in c.data) for c in self.worksheet.columns)
             self.starter_panel.setVisible(not has_data)
-            self.sheet_summary.setText(f"{self.worksheet.row_count():,} rows · {self.worksheet.column_count()} columns")
+            rows = self.worksheet.row_count()
+            columns = self.worksheet.column_count()
+            row_label = "row" if rows == 1 else "rows"
+            column_label = "column" if columns == 1 else "columns"
+            self.sheet_summary.setText(f"{rows:,} {row_label} · {columns} {column_label}")
 
     def _on_can_undo_changed(self, can_undo: bool):
         self.btn_undo.setEnabled(can_undo)
@@ -568,6 +596,113 @@ class SpreadsheetWidget(QWidget):
 
         self.selection_changed.emit(cols)
 
+    def _add_row_actions(self, menu: QMenu):
+        set_count = menu.addAction("Set Row Count…", self.set_row_count)
+        append = menu.addAction("Add Rows at End…", self.add_rows)
+        menu.addSeparator()
+        insert = menu.addAction("Insert Row Above", self.insert_row_above)
+        delete = menu.addAction("Delete Selected Rows", self.delete_selected_rows)
+
+        def update_actions():
+            has_columns = self.worksheet.column_count() > 0
+            has_rows_selected = self.worksheet.row_count() > 0 and self.table_view.selectionModel().hasSelection()
+            set_count.setEnabled(has_columns)
+            append.setEnabled(has_columns)
+            insert.setEnabled(has_rows_selected)
+            delete.setEnabled(has_rows_selected)
+
+        menu.aboutToShow.connect(update_actions)
+
+    def _selected_rows(self) -> List[int]:
+        selection = self.table_view.selectionModel().selection()
+        row_count = self.worksheet.row_count()
+        return sorted({
+            row
+            for span in selection
+            for row in range(span.top(), min(span.bottom() + 1, row_count))
+        })
+
+    def _on_row_context_menu(self, pos):
+        header = self.table_view.verticalHeader()
+        row = header.logicalIndexAt(pos)
+        if row < 0:
+            return
+        if not any(span.top() <= row <= span.bottom() for span in self.table_view.selectionModel().selection()):
+            self.table_view.selectRow(row)
+        self.rows_menu.exec(header.mapToGlobal(pos))
+
+    def set_row_count(self):
+        if not self.worksheet.column_count():
+            return
+        current = self.worksheet.row_count()
+        count, accepted = QInputDialog.getInt(
+            self, "Set Row Count", "Total rows in this worksheet:", current, 0, max(current, 1_000_000)
+        )
+        if not accepted or count == current:
+            return
+        if count > current:
+            self._insert_rows(current, count - current, "Set Row Count")
+        else:
+            self._delete_row_ranges([(count, current - count)], "Set Row Count")
+
+    def add_rows(self):
+        if not self.worksheet.column_count():
+            return
+        count, accepted = QInputDialog.getInt(
+            self, "Add Rows", "Blank rows to add at the end:", 1, 1, 100_000
+        )
+        if accepted:
+            self._insert_rows(self.worksheet.row_count(), count, "Add Rows")
+
+    def insert_row_above(self):
+        rows = self._selected_rows()
+        if rows:
+            self._insert_rows(rows[0], 1, "Insert Row")
+
+    def delete_selected_rows(self):
+        ranges = []
+        for _, group in groupby(enumerate(self._selected_rows()), key=lambda pair: pair[1] - pair[0]):
+            rows = [row for _, row in group]
+            ranges.append((rows[0], len(rows)))
+        if ranges:
+            self._delete_row_ranges(ranges, "Delete Rows")
+
+    def _insert_rows(self, first: int, count: int, action: str):
+        before = copy.deepcopy(self.worksheet.to_dict())
+        self.worksheet.insert_rows(first, count)
+        self._record_row_change(before, action)
+        self.table_view.setCurrentIndex(self.model.index(first, 0))
+
+    def _delete_row_ranges(self, ranges: list[tuple[int, int]], action: str):
+        has_data = any(
+            value is not None and value != ""
+            for col in self.worksheet.columns
+            for first, count in ranges
+            for value in col.data[first:first + count]
+        )
+        if has_data:
+            total = sum(count for _, count in ranges)
+            answer = QMessageBox.question(
+                self, "Delete Worksheet Rows",
+                f"Delete {total:,} {'row' if total == 1 else 'rows'}, including the data? "
+                "You can undo this change.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        before = copy.deepcopy(self.worksheet.to_dict())
+        for first, count in reversed(ranges):
+            self.worksheet.delete_rows(first, count)
+        self._record_row_change(before, action)
+        row = min(ranges[0][0], self.model.rowCount() - 1)
+        self.table_view.setCurrentIndex(self.model.index(row, 0))
+
+    def _record_row_change(self, before, action: str):
+        self.undo_stack.push(WorksheetSnapshotCommand(
+            self.worksheet, before, self.worksheet.to_dict(), action, callback=self.refresh_view
+        ))
+
     def add_column(self):
         before = copy.deepcopy(self.worksheet.to_dict())
         self.worksheet.add_column()
@@ -663,6 +798,11 @@ class SpreadsheetWidget(QWidget):
         paste_menu.addAction("Paste Directly into Cells (Raw)", lambda: self.paste_selection(force_raw=True))
 
         menu.addAction("Clear Cells (Del)", self.clear_selection)
+        if index.isValid():
+            selection = self.table_view.selectionModel()
+            if not selection.isSelected(index):
+                self.table_view.setCurrentIndex(index)
+            menu.addMenu(self.rows_menu)
         selected_cols = self.get_selected_column_indexes()
         if len(selected_cols) > 1:
             col_names = [self.worksheet.get_column(c).name for c in selected_cols if self.worksheet.get_column(c)]
@@ -681,11 +821,9 @@ class SpreadsheetWidget(QWidget):
             menu.addAction("Column Statistics...", lambda: self.show_column_stats(col_idx))
 
         menu.addSeparator()
-        menu.addAction("🎯 Mask Selected Cells [M]", self.mask_selection)
-        menu.addAction("✨ Unmask Selected Cells", self.unmask_selection)
-        menu.addAction("Unmask All Cells in Worksheet", self.clear_all_masks)
+        self._add_mask_actions(menu)
 
-        menu.exec(self.table_view.mapToGlobal(pos))
+        menu.exec(self.table_view.viewport().mapToGlobal(pos))
 
     def _set_role(self, col_idx: int, role: ColumnRole):
         col = self.worksheet.get_column(col_idx)
@@ -705,7 +843,7 @@ class SpreadsheetWidget(QWidget):
         if not col:
             return
         old_data = list(col.data)
-        n = max(self.worksheet.row_count(), 50)
+        n = self.worksheet.row_count() or 50
         if fill_type == "seq":
             new_data = [float(i + 1) for i in range(n)]
         elif fill_type == "uniform":
@@ -1001,7 +1139,10 @@ class SpreadsheetWidget(QWidget):
 
     def clear_selection(self):
         """Clears contents of selected cells with Undo support."""
-        indexes = self.table_view.selectionModel().selectedIndexes()
+        indexes = [
+            idx for idx in self.table_view.selectionModel().selectedIndexes()
+            if self.worksheet.get_cell(idx.row(), idx.column()) is not None
+        ]
         if not indexes:
             return
 
@@ -1014,19 +1155,28 @@ class SpreadsheetWidget(QWidget):
         self.undo_stack.push(cmd)
         self._notify_data_modified("Cleared cells")
 
+    def _add_mask_actions(self, menu: QMenu):
+        menu.addAction("Mask Cells (Exclude) [M]", lambda: self.mask_selection())
+        menu.addAction("Unselect Cells (Include Again)", self.unmask_selection)
+        menu.addAction("Unselect All Masked Cells", self.clear_all_masks)
+
     def mask_selection(self, masked: bool = True):
         """Masks or unmasks selected cells to exclude/include them in curve fitting and stats."""
-        selection = self.table_view.selectionModel().selectedIndexes()
+        row_count = self.worksheet.row_count()
+        selection = [
+            idx for idx in self.table_view.selectionModel().selectedIndexes()
+            if idx.row() < row_count and self.worksheet.is_cell_masked(idx.row(), idx.column()) != masked
+        ]
         if not selection:
             return
         before = copy.deepcopy(self.worksheet.to_dict())
         for idx in selection:
             self.worksheet.mask_cell(idx.row(), idx.column(), masked=masked)
-        after = copy.deepcopy(self.worksheet.to_dict())
-        action_name = "Mask Cells" if masked else "Unmask Cells"
-        cmd = WorksheetSnapshotCommand(self.worksheet, before, after, action_name, callback=self.refresh_view)
-        self.undo_stack.push(cmd)
-        self.refresh_view()
+        action_name = "Mask Cells" if masked else "Unselect Cells"
+        self.undo_stack.push(WorksheetSnapshotCommand(
+            self.worksheet, before, self.worksheet.to_dict(), action_name,
+            callback=self.table_view.viewport().update,
+        ))
         self._notify_data_modified(f"{action_name} ({len(selection)} cells)")
 
     def unmask_selection(self):
@@ -1035,11 +1185,14 @@ class SpreadsheetWidget(QWidget):
 
     def clear_all_masks(self):
         """Clears all masked cells in this worksheet."""
+        if not self.worksheet.has_masked_cells():
+            return
         before = copy.deepcopy(self.worksheet.to_dict())
         self.worksheet.clear_all_masks()
         after = copy.deepcopy(self.worksheet.to_dict())
-        cmd = WorksheetSnapshotCommand(self.worksheet, before, after, "Clear All Masks", callback=self.refresh_view)
+        cmd = WorksheetSnapshotCommand(
+            self.worksheet, before, after, "Unselect All Masked Cells", callback=self.table_view.viewport().update
+        )
         self.undo_stack.push(cmd)
-        self.refresh_view()
-        self._notify_data_modified("Cleared all masked cells")
+        self._notify_data_modified("All masked cells included again")
 

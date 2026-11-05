@@ -50,7 +50,7 @@ def test_quick_fill_uniform_and_normal(qapp):
     # 1. Fill Uniform Random [0, 1]
     sw._fill_col(0, "uniform")
     col_a = ws.columns[0]
-    assert len(col_a.data) >= 50
+    assert len(col_a.data) == 10
     assert all(isinstance(v, float) for v in col_a.data)
     assert all(0.0 <= v <= 1.0 for v in col_a.data)
     assert sw.undo_stack.canUndo() is True
@@ -61,7 +61,7 @@ def test_quick_fill_uniform_and_normal(qapp):
 
     # 2. Fill Normal Random
     sw._fill_col(0, "normal")
-    assert len(col_a.data) >= 50
+    assert len(col_a.data) == 10
     assert all(isinstance(v, float) for v in col_a.data)
     assert sw.undo_stack.canUndo() is True
 

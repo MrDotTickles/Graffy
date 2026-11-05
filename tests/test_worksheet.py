@@ -54,3 +54,26 @@ def test_dataframe_roundtrip():
 
     df_out = ws.to_dataframe()
     assert len(df_out) == 4
+
+
+
+def test_row_changes_keep_masks_with_their_values():
+    ws = Worksheet.create_default(num_rows=4)
+    ws.columns[0].data = [4, 3, 1, 2]
+    ws.columns[1].data = [40, 30, 10]
+    ws.mask_cell(1, 1)
+    ws.mask_cell(2, 1)
+
+    ws.insert_rows(1, 2)
+    assert ws.row_count() == 6
+    assert ws.columns[1].data == [40, None, None, 30, 10]
+    assert ws.columns[1].masked_rows == {3, 4}
+
+    ws.delete_rows(2, 2)
+    assert ws.columns[0].data == [4, None, 1, 2]
+    assert ws.columns[1].data == [40, None, 10]
+    assert ws.columns[1].masked_rows == {2}
+
+    ws.sort_by_column(0)
+    assert ws.columns[1].get_value(0) == 10
+    assert ws.columns[1].masked_rows == {0}

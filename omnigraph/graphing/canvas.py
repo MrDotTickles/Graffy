@@ -252,7 +252,8 @@ class OmniCanvas(QWidget):
         if pt:
             label, px, py, row_idx = pt[:4]
             is_m = pt[4] if len(pt) > 4 else False
-            act_text = f"✨ Unmask Point ({px:.4g}, {py:.4g}) [Row {row_idx + 1}] [M]" if is_m else f"🎯 Mask / Exclude Point ({px:.4g}, {py:.4g}) [Row {row_idx + 1}] [M]"
+            action = "Unselect Point (Include Again)" if is_m else "Mask Point (Exclude)"
+            act_text = f"{action} · Row {row_idx + 1} ({px:.4g}, {py:.4g}) [M]"
             menu.addAction(act_text, lambda: self.point_mask_toggled.emit(label, row_idx))
             menu.addSeparator()
 

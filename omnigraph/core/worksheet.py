@@ -376,21 +376,27 @@ class Worksheet:
 
     def insert_rows(self, row_idx: int, count: int = 1):
         """Insert count empty rows at row_idx."""
-        if row_idx is None:
+        if row_idx is None or row_idx < 0 or count <= 0:
             return
-        for c in self.columns:
-            if row_idx >= len(c.data):
-                c.data.extend([None] * (row_idx - len(c.data) + count))
-            else:
-                for _ in range(count):
-                    c.data.insert(row_idx, None)
+        blanks = [None] * count
+        for col in self.columns:
+            if row_idx > len(col.data):
+                col.data.extend([None] * (row_idx - len(col.data)))
+            col.data[row_idx:row_idx] = blanks
+            col.masked_rows = {row + count if row >= row_idx else row for row in col.masked_rows}
 
     def delete_rows(self, row_idx: int, count: int = 1):
         """Delete count rows starting at row_idx."""
-        if row_idx is None:
+        if row_idx is None or row_idx < 0 or count <= 0:
             return
-        for c in self.columns:
-            del c.data[row_idx : row_idx + count]
+        end = row_idx + count
+        for col in self.columns:
+            del col.data[row_idx:end]
+            col.masked_rows = {
+                row - count if row >= end else row
+                for row in col.masked_rows
+                if not row_idx <= row < end
+            }
 
     def clear_cells(self, rows: List[int], cols: List[int]):
         """Clear specified cells."""
@@ -438,14 +444,10 @@ class Worksheet:
         if r_count <= 1:
             return
 
-        # Build list of rows
-        rows = []
-        for r in range(r_count):
-            row_vals = [col.get_value(r) for col in self.columns]
-            rows.append(row_vals)
+        sort_column = self.columns[col_idx]
 
         def sort_key(row):
-            v = row[col_idx]
+            v = sort_column.get_value(row)
             if v is None or v == "" or (isinstance(v, float) and np.isnan(v)):
                 return (2, "")
             try:
@@ -455,11 +457,10 @@ class Worksheet:
             except (ValueError, TypeError):
                 return (1, str(v))
 
-        rows.sort(key=sort_key, reverse=not ascending)
-
-        # Repopulate
-        for c_i, col in enumerate(self.columns):
-            col.data = [rows[r][c_i] for r in range(r_count)]
+        rows = sorted(range(r_count), key=sort_key, reverse=not ascending)
+        for col in self.columns:
+            col.data = [col.get_value(row) for row in rows]
+            col.masked_rows = {new for new, old in enumerate(rows) if old in col.masked_rows}
 
     sort_rows_by_column = sort_by_column
 
