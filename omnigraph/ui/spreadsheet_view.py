@@ -268,11 +268,12 @@ class SpreadsheetWidget(QWidget):
     data_modified = pyqtSignal()
     selection_changed = pyqtSignal(list)  # list of selected column indexes
     request_add_to_active_graph = pyqtSignal(str)  # plot_type
-    request_jump_to_graph = pyqtSignal(str)  # graph_title
+    request_jump_to_graph = pyqtSignal(str)  # graph ID
 
-    def __init__(self, worksheet: Worksheet, parent=None):
+    def __init__(self, worksheet: Worksheet, parent=None, *, workbook_name=None):
         super().__init__(parent)
         self.worksheet = worksheet
+        self.workbook_name = workbook_name
         self.undo_stack = QUndoStack(self)
         self.model = WorksheetTableModel(worksheet, undo_stack=self.undo_stack)
         self.model.dataChanged.connect(lambda: self.data_modified.emit())
@@ -326,8 +327,8 @@ class SpreadsheetWidget(QWidget):
 
         # Point / Cell Masking
         self.btn_mask = QToolButton()
-        self.btn_mask.setText("Masking")
-        self.btn_mask.setToolTip("Exclude cells from analysis or include them again")
+        self.btn_mask.setText("Data selection")
+        self.btn_mask.setToolTip("Select cells to exclude them from analysis. Unselect to include them again.")
         self.btn_mask.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         m_menu = QMenu(self.btn_mask)
         self._add_mask_actions(m_menu)
@@ -407,7 +408,6 @@ class SpreadsheetWidget(QWidget):
         if hasattr(self, "starter_panel"):
             return
         from PyQt6.QtWidgets import QFrame, QPushButton
-        self.toolbar.hide()
         header = QWidget()
         header.setObjectName("SheetHeader")
         row = QHBoxLayout(header)
@@ -423,10 +423,11 @@ class SpreadsheetWidget(QWidget):
         rows_button.setMenu(self.rows_menu)
         row.addWidget(rows_button)
         self.rows_toolbar_action.setVisible(False)
-        self.sheet_tools_toggle = QPushButton("Column tools")
-        self.sheet_tools_toggle.setIcon(icon("edit"))
+        self.sheet_tools_toggle = QToolButton()
         self.sheet_tools_toggle.setCheckable(True)
-        self.sheet_tools_toggle.toggled.connect(self.toolbar.setVisible)
+        self.sheet_tools_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.sheet_tools_toggle.toggled.connect(self._set_sheet_tools_visible)
+        self.sheet_tools_toggle.setChecked(True)
         row.addWidget(self.sheet_tools_toggle)
         self.layout().insertWidget(0,header)
         self.starter_panel = QFrame()
@@ -456,6 +457,11 @@ class SpreadsheetWidget(QWidget):
         self.data_modified.connect(self._refresh_starter_panel)
         self._refresh_starter_panel()
 
+    def _set_sheet_tools_visible(self, visible):
+        self.toolbar.setVisible(visible)
+        self.sheet_tools_toggle.setText("Hide tools" if visible else "Show tools")
+        self.sheet_tools_toggle.setArrowType(Qt.ArrowType.UpArrow if visible else Qt.ArrowType.DownArrow)
+
     def _refresh_starter_panel(self):
         if hasattr(self,"starter_panel"):
             has_data = any(any(v is not None and str(v).strip() for v in c.data) for c in self.worksheet.columns)
@@ -484,7 +490,12 @@ class SpreadsheetWidget(QWidget):
         """Updates the toolbar indicator showing which graphs plot this worksheet."""
         if not hasattr(self, "btn_plotted_graph"):
             return
-        linked = [g for g in graphs if any(c.source_sheet == self.worksheet.name for c in g.curves)]
+        linked = [
+            graph for graph in graphs
+            if any(curve.source_sheet == self.worksheet.name
+                   and (self.workbook_name is None or curve.source_workbook == self.workbook_name)
+                   for curve in graph.curves)
+        ]
         if not linked:
             self.btn_plotted_graph.setText("None")
             self.btn_plotted_graph.setToolTip("No graphs currently plot data from this worksheet.")
@@ -500,7 +511,7 @@ class SpreadsheetWidget(QWidget):
                 self.btn_plotted_graph.clicked.disconnect()
             except Exception:
                 pass
-            self.btn_plotted_graph.clicked.connect(lambda checked=False, t=g.title: self.request_jump_to_graph.emit(t))
+            self.btn_plotted_graph.clicked.connect(lambda checked=False, graph_id=g.id: self.request_jump_to_graph.emit(graph_id))
         else:
             self.btn_plotted_graph.setText(f"📈 {len(linked)} Graphs ▾")
             self.btn_plotted_graph.setToolTip(f"{len(linked)} graphs plot this worksheet: {', '.join(g.title for g in linked)}")
@@ -508,7 +519,7 @@ class SpreadsheetWidget(QWidget):
             self.btn_plotted_graph.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
             menu = QMenu(self.btn_plotted_graph)
             for g in linked:
-                menu.addAction(f"📈 {g.title}", lambda t=g.title: self.request_jump_to_graph.emit(t))
+                menu.addAction(g.title, lambda checked=False, graph_id=g.id: self.request_jump_to_graph.emit(graph_id))
             self.btn_plotted_graph.setMenu(menu)
 
     def undo(self):
@@ -1137,9 +1148,9 @@ class SpreadsheetWidget(QWidget):
         self._notify_data_modified("Cleared cells")
 
     def _add_mask_actions(self, menu: QMenu):
-        menu.addAction("Mask Cells (Exclude) [M]", lambda: self.mask_selection())
+        menu.addAction("Select Cells (Exclude) [M]", lambda: self.mask_selection())
         menu.addAction("Unselect Cells (Include Again)", self.unmask_selection)
-        menu.addAction("Unselect All Masked Cells", self.clear_all_masks)
+        menu.addAction("Unselect All Cells", self.clear_all_masks)
 
     def mask_selection(self, masked: bool = True):
         """Masks or unmasks selected cells to exclude/include them in curve fitting and stats."""
@@ -1153,7 +1164,7 @@ class SpreadsheetWidget(QWidget):
         before = copy.deepcopy(self.worksheet.to_dict())
         for idx in selection:
             self.worksheet.mask_cell(idx.row(), idx.column(), masked=masked)
-        action_name = "Mask Cells" if masked else "Unselect Cells"
+        action_name = "Select Cells" if masked else "Unselect Cells"
         self.undo_stack.push(WorksheetSnapshotCommand(
             self.worksheet, before, self.worksheet.to_dict(), action_name,
             callback=self.table_view.viewport().update,
@@ -1172,8 +1183,8 @@ class SpreadsheetWidget(QWidget):
         self.worksheet.clear_all_masks()
         after = copy.deepcopy(self.worksheet.to_dict())
         cmd = WorksheetSnapshotCommand(
-            self.worksheet, before, after, "Unselect All Masked Cells", callback=self.table_view.viewport().update
+            self.worksheet, before, after, "Unselect All Cells", callback=self.table_view.viewport().update
         )
         self.undo_stack.push(cmd)
-        self._notify_data_modified("All masked cells included again")
+        self._notify_data_modified("All excluded cells included again")
 

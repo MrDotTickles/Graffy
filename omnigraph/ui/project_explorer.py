@@ -299,7 +299,7 @@ class ProjectExplorerWidget(QWidget):
 
         # Restore previous selection
         if selected_data:
-            self.highlight_item(selected_data[0], selected_data[1])
+            self.highlight_item(*selected_data)
 
     def _filter_tree(self, query: str):
         """Live search filter across sheet names, graph titles, reports, and column metadata."""
@@ -328,7 +328,7 @@ class ProjectExplorerWidget(QWidget):
             if visible_children > 0:
                 cat_item.setExpanded(True)
 
-    def highlight_item(self, item_type: str, item_id: str):
+    def highlight_item(self, item_type: str, item_id: str, parent_id: str = ""):
         """Highlights matching tree item without triggering recursive activations."""
         self.tree.blockSignals(True)
         try:
@@ -337,7 +337,13 @@ class ProjectExplorerWidget(QWidget):
                 for j in range(cat_item.childCount()):
                     child = cat_item.child(j)
                     data = child.data(0, Qt.ItemDataRole.UserRole)
-                    if data and data[0] == item_type and (data[1] == item_id or data[2] == item_id):
+                    if not data or data[0] != item_type:
+                        continue
+                    if parent_id and item_type in {"graph", "report"}:
+                        matches = data[2] == parent_id
+                    else:
+                        matches = (item_id in data[1:]) if not parent_id else data[1:] == (item_id, parent_id)
+                    if matches:
                         cat_item.setExpanded(True)
                         child.setHidden(False)
                         self.tree.setCurrentItem(child)

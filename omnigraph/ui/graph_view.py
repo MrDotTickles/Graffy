@@ -891,28 +891,27 @@ class GraphViewWidget(QWidget):
     def _on_point_mask_toggled(self, curve_label: str, row_idx: int):
         """Toggle mask/exclusion for a point in the dataset."""
         target_curve = next((c for c in self.graph_model.curves if c.label == curve_label), None)
-        if not target_curve and self.graph_model.curves:
-            target_curve = self.graph_model.curves[0]
-        if target_curve:
-            wb = self.project.get_workbook(target_curve.source_workbook) or (self.project.workbooks[0] if self.project.workbooks else None)
-            if wb:
-                ws = next((s for s in wb.sheets if s.name == target_curve.source_sheet), None) or wb.get_active_sheet()
-                if ws:
-                    col_y = ws.get_column(target_curve.y_col_idx)
-                    col_x = ws.get_column(target_curve.x_col_idx) if target_curve.x_col_idx is not None else None
-                    if col_y:
-                        is_m = col_y.is_row_masked(row_idx) or (col_x.is_row_masked(row_idx) if col_x else False)
-                        col_y.mask_row(row_idx, not is_m)
-                        if col_x and is_m:
-                            col_x.mask_row(row_idx, False)
-                        self.refresh_plot()
-                        self.curves_changed.emit()
-                        win = self.window()
-                        if hasattr(win, "refresh_active_spreadsheet"):
-                            win.refresh_active_spreadsheet()
-                        if hasattr(win, "statusBar") and win.statusBar():
-                            status_msg = f"Point {row_idx + 1} ({curve_label}) {'excluded from fits' if not is_m else 'restored'}"
-                            win.statusBar().showMessage(f"🎯 {status_msg}", 3000)
+        if target_curve is None:
+            return
+        ws = self.project.get_worksheet(target_curve.source_workbook, target_curve.source_sheet)
+        if ws is None:
+            return
+        col_y = ws.get_column(target_curve.y_col_idx)
+        col_x = ws.get_column(target_curve.x_col_idx)
+        if col_y is None or not 0 <= row_idx < len(col_y.data):
+            return
+        excluded = col_y.is_row_masked(row_idx) or (col_x is not None and col_x.is_row_masked(row_idx))
+        col_y.mask_row(row_idx, not excluded)
+        if col_x is not None and excluded:
+            col_x.mask_row(row_idx, False)
+        self.refresh_plot()
+        self.curves_changed.emit()
+        window = self.window()
+        if hasattr(window, "refresh_active_spreadsheet"):
+            window.refresh_active_spreadsheet()
+        if hasattr(window, "statusBar") and window.statusBar():
+            action = "included again" if excluded else "selected for exclusion"
+            window.statusBar().showMessage(f"Point {row_idx + 1} ({curve_label}) {action}", 3000)
 
     def set_zoom(self, zoom: float):
         """Scales graph figure DPI and layout to zoom in or out of the plot scale."""

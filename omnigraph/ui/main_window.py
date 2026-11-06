@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QMenu, QMessageBox, QFileDialog, QInputDialog, QLabel,
     QStatusBar, QApplication, QWidget, QSizePolicy, QStackedWidget, QVBoxLayout, QPushButton, QComboBox, QHBoxLayout
 )
-from PyQt6.QtCore import Qt, pyqtSlot, QSize, QSettings, QLockFile, QStandardPaths, QTimer
+from PyQt6.QtCore import Qt, pyqtSlot, QSize, QSettings, QLockFile, QStandardPaths, QTimer, QSignalBlocker
 from PyQt6.QtGui import QAction, QKeySequence, QIcon, QShortcut, QPalette, QColor
 
 from omnigraph.core.project import Project, GraphModel, CurveModel, ReportModel
@@ -199,6 +199,8 @@ class MainWindow(QMainWindow):
         self.export_workflow_action.setEnabled(bool(graph and graph.curves))
         if graph:
             self.status_bar.showMessage("Your chart is ready. Edit chart to adjust appearance. Export graph to save or copy your figure.")
+        elif isinstance(widget, ReportViewWidget):
+            self.status_bar.showMessage("Use Copy report or Save HTML to reference these results.")
         elif has_data:
             self.status_bar.showMessage("Select columns, then Create chart. The X column supplies horizontal values.")
         else:
@@ -543,6 +545,8 @@ class MainWindow(QMainWindow):
         self._update_recent_menu()
         self._add_action(menu_file, "Save Project", self.save_project, "Ctrl+S")
         self._add_action(menu_file, "Save Project As...", self.save_project_as)
+        self.close_tab_action = self._add_action(menu_file, "Close Tab", self.close_current_tab, "Ctrl+W")
+        self.close_tab_action.setEnabled(False)
         menu_file.addSeparator()
         self._add_action(menu_file, "Import Data (CSV, Excel)...", self.import_data, "Ctrl+I")
         self._add_action(menu_file, "Export Active Graph...", self.export_active_graph, "Ctrl+E")
@@ -919,7 +923,8 @@ class MainWindow(QMainWindow):
         old_views=[self.center_tabs.widget(i) for i in range(self.center_tabs.count())]
         self.center_tabs.clear()
         self.tab_metadata.clear()
-        self._last_active_sheet_widget=None
+        self._last_active_sheet_widget = None
+        self._last_active_graph_widget = None
         for view in old_views:
             view.hide()
             view.deleteLater()
@@ -935,20 +940,20 @@ class MainWindow(QMainWindow):
         self.explorer_widget.set_project(self.project)
         curr_idx = self.center_tabs.currentIndex()
         if curr_idx in self.tab_metadata:
-            c_type, c_id, _, _ = self.tab_metadata[curr_idx]
-            self.explorer_widget.highlight_item(c_type, c_id)
+            kind, title, identity, _ = self.tab_metadata[curr_idx]
+            self.explorer_widget.highlight_item(kind, title, identity)
         self._update_undo_redo_actions()
         self._update_workflow_actions()
 
     def _add_sheet_view(self, wb, sheet):
-        sw = SpreadsheetWidget(sheet, self)
+        sw = SpreadsheetWidget(sheet, self, workbook_name=wb.name)
         if getattr(self, "_guided_workspace", False):
             sw.enable_guided_sheet()
         sw.request_plot.connect(self.create_plot)
         sw.request_add_to_active_graph.connect(self.add_selected_columns_to_active_graph)
         sw.data_modified.connect(self._on_sheet_data_modified)
         sw.selection_changed.connect(self._on_sheet_selection_changed)
-        sw.request_jump_to_graph.connect(lambda g_title: self._on_explorer_item_activated("graph", g_title, ""))
+        sw.request_jump_to_graph.connect(lambda graph_id: self._on_explorer_item_activated("graph", "", graph_id))
         sw.update_linked_graphs(self.project.graphs)
         sw.undo_stack.canUndoChanged.connect(self._update_undo_redo_actions)
         sw.undo_stack.canRedoChanged.connect(self._update_undo_redo_actions)
@@ -982,6 +987,7 @@ class MainWindow(QMainWindow):
         return idx
 
     def _on_tab_changed(self, index: int):
+        self.close_tab_action.setEnabled(index >= 0)
         if hasattr(self,"workspace_stack"):
             self.workspace_stack.setCurrentIndex(0 if self.center_tabs.count() else 1)
         self._update_workflow_actions()
@@ -999,33 +1005,45 @@ class MainWindow(QMainWindow):
             if sw:
                 self._on_sheet_selection_changed(sw.get_selected_column_indexes())
         elif item_type == "graph":
-            graph = self.project.get_graph(item_id)
-            if graph:
-                self.property_widget.set_active_graph(graph)
+            self._last_active_graph_widget = widget
+            self.property_widget.set_active_graph(widget.graph_model)
             if hasattr(self, "act_del_col"):
                 self.act_del_col.setToolTip("Delete currently selected column(s)")
         else:
             if hasattr(self, "act_del_col"):
                 self.act_del_col.setToolTip("Delete currently selected column(s)")
 
-        self.explorer_widget.highlight_item(item_type, item_id)
+        self.explorer_widget.highlight_item(item_type, item_id, parent_id)
         self._update_undo_redo_actions()
+
+    def close_current_tab(self):
+        self._on_tab_close_requested(self.center_tabs.currentIndex())
 
     def _on_tab_close_requested(self, index: int):
         if index not in self.tab_metadata:
             return
         _,name,_,view=self.tab_metadata[index]
-        if getattr(self,"_last_active_sheet_widget",None) is view:
-            self._last_active_sheet_widget=None
-        self.center_tabs.removeTab(index)
-        self.tab_metadata.pop(index,None)
+        if self._last_active_sheet_widget is view:
+            self._last_active_sheet_widget = None
+        if self._last_active_graph_widget is view:
+            self._last_active_graph_widget = None
+        with QSignalBlocker(self.center_tabs):
+            self.center_tabs.removeTab(index)
+        self.tab_metadata.pop(index, None)
         self._on_tabs_moved()
         view.deleteLater()
         self.status_bar.showMessage(f"Closed {name}. Reopen it from the project panel.",4500)
 
     def _on_explorer_item_activated(self, item_type: str, item_id: str, parent_id: str):
         for tab_idx,meta in self.tab_metadata.items():
-            if meta[0]==item_type and meta[1]==item_id and (item_type!="sheet" or not parent_id or meta[2]==parent_id):
+            if meta[0] != item_type:
+                continue
+            if item_type in {"graph", "report"} and parent_id:
+                matches = meta[2] == parent_id
+            else:
+                matches = (meta[1] == item_id or (item_type in {"graph", "report"} and meta[2] == item_id))
+                matches = matches and (not parent_id or meta[2] == parent_id)
+            if matches:
                 self.center_tabs.setCurrentIndex(tab_idx)
                 return
         index=None
@@ -1038,11 +1056,13 @@ class MainWindow(QMainWindow):
                     index=self._add_sheet_view(wb,sheet)
                     break
         elif item_type=="graph":
-            graph=next((g for g in self.project.graphs if g.title==item_id or g.id==item_id),None)
+            graph = next((g for g in self.project.graphs
+                          if g.id == parent_id or (not parent_id and item_id in (g.id, g.title))), None)
             if graph:
                 index=self._add_graph_view(graph)
         elif item_type=="report":
-            report=next((r for r in self.project.reports if r.title==item_id or r.id==item_id),None)
+            report = next((r for r in self.project.reports
+                           if r.id == parent_id or (not parent_id and item_id in (r.id, r.title))), None)
             if report:
                 index=self._add_report_view(report)
         if index is not None:
@@ -1190,7 +1210,7 @@ class MainWindow(QMainWindow):
             sheet.name = new_name
             for g in self.project.graphs:
                 for c in g.curves:
-                    if c.source_sheet == sheet_name:
+                    if c.source_workbook == wb.name and c.source_sheet == sheet_name:
                         c.source_sheet = new_name
             self._populate_all_views()
             self._on_explorer_item_activated("sheet", new_name, wb.name)
@@ -1212,27 +1232,22 @@ class MainWindow(QMainWindow):
     def get_active_worksheet(self) -> Optional[Worksheet]:
         idx = self.center_tabs.currentIndex()
         if idx in self.tab_metadata:
-            m = self.tab_metadata[idx]
-            if m[0] == "sheet":
-                wb = self.project.get_workbook(m[2])
-                return next((s for s in wb.sheets if s.name == m[1]), None) if wb else None
+            kind, title, workbook, view = self.tab_metadata[idx]
+            if kind == "sheet":
+                return view.worksheet
+            if kind == "graph":
+                curve = next((item for item in view.graph_model.curves if not item.is_fit_curve), None)
+                if curve:
+                    return self.project.get_worksheet(curve.source_workbook, curve.source_sheet)
 
-        # Fallback to first sheet
+        # Some worksheet tools can use a sheet even if its tab is closed.
         if self.project.workbooks and self.project.workbooks[0].sheets:
             return self.project.workbooks[0].sheets[0]
         return None
 
     def get_active_graph(self) -> Optional[GraphModel]:
-        idx = self.center_tabs.currentIndex()
-        if idx in self.tab_metadata:
-            m = self.tab_metadata[idx]
-            if m[0] == "graph":
-                return self.project.get_graph(m[1])
-
-        # Fallback to first graph
-        if self.project.graphs:
-            return self.project.graphs[0]
-        return None
+        widget = self.get_active_graph_widget()
+        return widget.graph_model if widget else None
 
     def get_active_spreadsheet_widget(self) -> Optional[SpreadsheetWidget]:
         idx = self.center_tabs.currentIndex()
@@ -1318,23 +1333,22 @@ class MainWindow(QMainWindow):
     def add_selected_columns_to_active_graph(self, plot_type: str = "line_symbol"):
         """Layers the selected column(s) from the active worksheet onto the active graph."""
         active_graph = self.get_active_graph()
-        if not active_graph:
+        if active_graph is None and self._last_active_graph_widget is not None:
+            active_graph = self._last_active_graph_widget.graph_model
+        if active_graph is None:
+            active_graph = next((view.graph_model for kind, _, _, view in self.tab_metadata.values()
+                                 if kind == "graph"), None)
+        if active_graph is None:
             self.create_plot(plot_type)
             return
 
-        ws = self.get_active_worksheet()
-        if not ws:
-            QMessageBox.warning(self, "No Worksheet", "Please select a worksheet containing data.")
-            return
-
         sw = self.get_active_spreadsheet_widget()
-        selected_cols = sw.get_selected_column_indexes() if sw else []
-        if not selected_cols:
-            selected_cols = [i for i, col in enumerate(ws.columns) if col.role != ColumnRole.X]
-            if not selected_cols and len(ws.columns) > 1:
-                selected_cols = [1]
-
-        wb_name = self.project.workbooks[0].name if self.project.workbooks else "Book1"
+        if sw is None:
+            QMessageBox.information(self, "Choose data to plot", "Open the worksheet whose data you want to add.")
+            return
+        ws = sw.worksheet
+        pairs = ws.plot_column_pairs(sw.get_selected_column_indexes())
+        wb_name = sw.workbook_name
         palette = [
             "#0284c7", "#e11d48", "#16a34a", "#d97706", "#7c3aed",
             "#0891b2", "#dc2626", "#475569", "#ea580c", "#2563eb"
@@ -1342,12 +1356,8 @@ class MainWindow(QMainWindow):
         markers = ["o", "s", "^", "D", "v", "<", ">", "p", "*", "h"]
 
         added_count = 0
-        for col_idx in selected_cols:
+        for x_idx, col_idx in pairs:
             col = ws.get_column(col_idx)
-            if not col or col.role == ColumnRole.X:
-                continue
-
-            x_idx = ws.find_x_column_for(col_idx)
             y_err_idx = ws.find_y_error_column_for(col_idx)
 
             curve_idx = len(active_graph.curves)
@@ -1511,10 +1521,11 @@ class MainWindow(QMainWindow):
         """Opens universal data import dialog with single or multi-file batch support."""
         self._show_import_dialog()
 
-    def _show_import_dialog(self, *, initial_filepaths=None, target_graph=None):
+    def _show_import_dialog(self, *, initial_filepaths=None, target_graph=None, plot=False):
         dialog = ImportDialog(
             initial_filepaths=initial_filepaths, parent=self,
             active_graph_title=target_graph.title if target_graph else None,
+            plot_by_default=plot or target_graph is not None,
         )
         if dialog.exec():
             self._process_imported_results(dialog, target_graph=target_graph if dialog.add_to_active_graph else None)
@@ -1557,7 +1568,13 @@ class MainWindow(QMainWindow):
                 wb = Workbook("Book1")
                 self.project.workbooks.append(wb)
 
-            merged_ws = Worksheet(name=f"Merged_{len(results)}_Files")
+            base_name = f"Merged_{len(results)}_Files"
+            merged_name = base_name
+            suffix = 2
+            while any(sheet.name == merged_name for sheet in wb.sheets):
+                merged_name = f"{base_name}_{suffix}"
+                suffix += 1
+            merged_ws = Worksheet(name=merged_name)
             merged_cols = []
             col_idx = 0
             for item in results:
@@ -1600,7 +1617,12 @@ class MainWindow(QMainWindow):
         created_graph = None
         if auto_plot and imported_sheets:
             first_name = results[0]["name"]
-            graph_title = f"Comparison - {len(results)} Files" if len(results) > 1 else f"Plot - {first_name}"
+            base_title = f"Comparison - {len(results)} Files" if len(results) > 1 else f"Plot - {first_name}"
+            graph_title = base_title
+            suffix = 2
+            while target_graph is None and self.project.get_graph(graph_title):
+                graph_title = f"{base_title} ({suffix})"
+                suffix += 1
             created_graph = target_graph or GraphModel(title=graph_title, title_text=graph_title, plot_type=plot_type)
             initial_curve_count = len(created_graph.curves)
 
@@ -1609,10 +1631,14 @@ class MainWindow(QMainWindow):
             palette = get_theme_palette("Origin Classic")
 
             for ws, wb_name in imported_sheets:
+                generated_x = ws.column_count() == 1
                 ws.add_row_index_for_single_column()
                 pairs = ws.plot_column_pairs()
-                if len(imported_sheets) > 1:
-                    pairs = pairs[:1]  # One representative series per file for comparison charts.
+                series = getattr(dlg, "series_choice", "first")
+                if series != "all":
+                    pairs = pairs[:1] if series == "first" else [
+                        (x, y) for x, y in pairs if ("column", y - int(generated_x)) == series
+                    ]
                 for x_col_idx, y_col_idx in pairs:
                     error = ws.find_y_error_column_for(y_col_idx)
                     created_graph.add_curve(CurveModel(
@@ -1621,7 +1647,8 @@ class MainWindow(QMainWindow):
                         x_col_idx=x_col_idx,
                         y_col_idx=y_col_idx,
                         y_err_col_idx=error,
-                        label=ws.name if len(pairs) == 1 else ws.columns[y_col_idx].display_label,
+                        label=ws.name if len(imported_sheets) > 1 and len(pairs) == 1
+                        else ws.columns[y_col_idx].display_label,
                         color=palette[len(created_graph.curves) % len(palette)],
                         plot_type="errorbar" if error is not None else plot_type,
                     ))
@@ -1631,8 +1658,6 @@ class MainWindow(QMainWindow):
             elif target_graph is None:
                 self.project.graphs.append(created_graph)
 
-        for worksheet, workbook_name in imported_sheets:
-            self._on_explorer_item_activated("sheet", worksheet.name, workbook_name)
         self.explorer_widget.set_project(self.project)
 
         if created_graph:
@@ -1643,10 +1668,13 @@ class MainWindow(QMainWindow):
             first_ws, first_wb = imported_sheets[0]
             self._on_explorer_item_activated("sheet", first_ws.name, first_wb)
 
-        self.status_bar.showMessage(f"Successfully imported {len(results)} data file(s)!", 4000)
+        if auto_plot and not created_graph:
+            self.status_bar.showMessage("Data imported. The chosen series was unavailable, so no chart was created.", 6000)
+        else:
+            self.status_bar.showMessage("Data imported and plotted." if created_graph else "Data imported.", 4000)
 
     def import_into_chart(self):
-        self._show_import_dialog(target_graph=self.get_active_graph())
+        self._show_import_dialog(target_graph=self.get_active_graph(), plot=True)
 
     def replace_chart_data(self, graph, duplicate=False):
         from omnigraph.core.plot_editing import rebind_chart_data
@@ -1900,10 +1928,24 @@ class MainWindow(QMainWindow):
                 self._on_sheet_data_modified()
 
     def open_statistics_dialog(self):
-        ws = self.get_active_worksheet()
-        if ws:
-            dlg = StatsDialog(ws.columns, self)
-            dlg.exec()
+        view = self.center_tabs.currentWidget()
+        if isinstance(view, SpreadsheetWidget):
+            workbook_name = self.tab_metadata[self.center_tabs.currentIndex()][2]
+            sheet = view.worksheet
+        elif isinstance(view, GraphViewWidget):
+            curve = next((curve for curve in view.graph_model.curves if not curve.is_fit_curve), None)
+            if curve is None:
+                return
+            workbook_name = curve.source_workbook
+            sheet = self.project.get_worksheet(workbook_name, curve.source_sheet)
+        else:
+            return
+        if sheet is None:
+            return
+        dialog = StatsDialog(sheet.columns, self, source=f"{workbook_name} / {sheet.name}")
+        if dialog.exec() and dialog.saved_report is not None:
+            self.project.reports.append(dialog.saved_report)
+            self._show_analysis_result(len(self.project.reports) - 1)
 
     def quick_fill_column(self, fill_type: str):
         sw = self.get_active_spreadsheet_widget()
@@ -1916,25 +1958,24 @@ class MainWindow(QMainWindow):
             self.project.workbooks.append(Workbook("Book1"))
         wb = self.project.workbooks[0]
         ws = wb.add_sheet()
-        self._populate_all_views()
+        self.explorer_widget.set_project(self.project)
         self._on_explorer_item_activated("sheet", ws.name, wb.name)
 
     def new_graph(self):
         title = f"Graph{len(self.project.graphs) + 1}"
         g = GraphModel(title=title)
         self.project.graphs.append(g)
-        self._populate_all_views()
+        self.explorer_widget.set_project(self.project)
         self._on_explorer_item_activated("graph", g.title, g.id)
 
     def create_plot(self, plot_type: str):
         """Create a chart from the resolved worksheet selection."""
-        ws = self.get_active_worksheet()
-        if not ws:
-            QMessageBox.warning(self, "No Data", "No active worksheet found.")
-            return
-
         sw = self.get_active_spreadsheet_widget()
-        selected_cols = sw.get_selected_column_indexes() if sw else []
+        if sw is None:
+            QMessageBox.information(self, "Choose data to plot", "Open a worksheet with data before creating a chart.")
+            return
+        ws = sw.worksheet
+        selected_cols = sw.get_selected_column_indexes()
 
         wb_name = self.project.workbooks[0].name
         for wb in self.project.workbooks:
@@ -2016,13 +2057,12 @@ class MainWindow(QMainWindow):
 
     def create_waterfall_plot(self):
         """Creates a stacked waterfall plot with auto-stagger offsets for analytical/spectroscopy series."""
-        ws = self.get_active_worksheet()
-        if not ws:
-            QMessageBox.warning(self, "No Data", "No active worksheet found.")
-            return
-
         sw = self.get_active_spreadsheet_widget()
-        selected_cols = sw.get_selected_column_indexes() if sw else []
+        if sw is None:
+            QMessageBox.information(self, "Choose data to plot", "Open a worksheet with data before creating a chart.")
+            return
+        ws = sw.worksheet
+        selected_cols = sw.get_selected_column_indexes()
 
         wb_name = self.project.workbooks[0].name
         for wb in self.project.workbooks:
@@ -2082,13 +2122,12 @@ class MainWindow(QMainWindow):
         Creates a publication-ready multi-panel "Figure 1" layout (grid_1x2, grid_2x1, grid_2x2).
         Automatically assigns curve layers to subplots with publication autograph labels ((A), (B), (C), (D)).
         """
-        ws = self.get_active_worksheet()
-        if not ws:
-            QMessageBox.warning(self, "No Data", "No active worksheet found.")
-            return
-
         sw = self.get_active_spreadsheet_widget()
-        selected_cols = sw.get_selected_column_indexes() if sw else []
+        if sw is None:
+            QMessageBox.information(self, "Choose data to plot", "Open a worksheet with data before creating a chart.")
+            return
+        ws = sw.worksheet
+        selected_cols = sw.get_selected_column_indexes()
 
         wb_name = self.project.workbooks[0].name
         for wb in self.project.workbooks:
@@ -2205,10 +2244,18 @@ class MainWindow(QMainWindow):
             self._populate_all_views()
             self._on_explorer_item_activated("graph", graph.title, graph.id)
 
+    def _show_analysis_result(self, previous_report_count):
+        self.refresh_active_graph()
+        self._on_graph_curves_changed()
+        self.explorer_widget.set_project(self.project)
+        if len(self.project.reports) > previous_report_count:
+            report = self.project.reports[-1]
+            self._on_explorer_item_activated("report", report.title, report.id)
+
     def open_fit_wizard(self, fit_type: str = "linear"):
-        gw = self.get_active_graph_widget()
-        active_graph = gw.graph_model if gw else self.get_active_graph()
+        active_graph = self.get_active_graph()
         active_ws = self.get_active_worksheet()
+        report_count = len(self.project.reports)
 
         dlg = FitDialog(
             project=self.project,
@@ -2218,26 +2265,13 @@ class MainWindow(QMainWindow):
             parent=self,
         )
         if dlg.exec():
-            self._populate_all_views()
-            if active_graph:
-                self._on_explorer_item_activated("graph", active_graph.title, active_graph.id)
-                if gw:
-                    gw.refresh_plot()
+            self._show_analysis_result(report_count)
 
     def open_peak_analysis_wizard(self):
-        gw = self.get_active_graph_widget()
-        active_graph = gw.graph_model if gw else self.get_active_graph()
-        dlg = PeakAnalysisDialog(project=self.project, active_graph=active_graph, parent=self)
+        report_count = len(self.project.reports)
+        dlg = PeakAnalysisDialog(project=self.project, active_graph=self.get_active_graph(), parent=self)
         if dlg.exec():
-            self._populate_all_views()
-            if active_graph:
-                self._on_explorer_item_activated("graph", active_graph.title, active_graph.id)
-                new_gw = self.get_active_graph_widget()
-                if new_gw:
-                    new_gw.refresh_plot()
-            elif self.project.reports:
-                last_rep = self.project.reports[-1]
-                self._on_explorer_item_activated("report", last_rep.title, last_rep.id)
+            self._show_analysis_result(report_count)
 
     def open_smoothing_dialog(self):
         ws = self.get_active_worksheet()

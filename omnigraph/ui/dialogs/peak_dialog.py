@@ -188,10 +188,19 @@ class PeakAnalysisDialog(QDialog):
         self.spn_distance.valueChanged.connect(self._clear_cached_result)
 
         self._populate_columns()
+        if self.active_graph:
+            curve = next((c for c in self.active_graph.curves if not c.is_fit_curve), None)
+            if curve:
+                index = self.combo_sheet.findData((curve.source_workbook, curve.source_sheet))
+                if index >= 0:
+                    self.combo_sheet.setCurrentIndex(index)
+                    self.combo_x_col.setCurrentIndex(max(0, self.combo_x_col.findData(curve.x_col_idx)))
+                    self.combo_y_col.setCurrentIndex(max(0, self.combo_y_col.findData(curve.y_col_idx)))
         self._run_peak_search(quiet=True)
 
     def _clear_cached_result(self, *args):
         self.last_result = None
+        self.table_peaks.setRowCount(0)
 
     def _populate_columns(self):
         self._clear_cached_result()
@@ -305,10 +314,17 @@ class PeakAnalysisDialog(QDialog):
 
         # 2. Add Report tab
         if self.chk_create_report.isChecked():
+            report_source = (
+                f"{self.combo_sheet.currentText()} · "
+                f"{self.combo_x_col.currentText()} → {self.combo_y_col.currentText()}"
+            )
             rep = ReportModel(
                 title=f"Peak Report ({len(res.peaks)} Peaks)",
                 report_type="peak_analysis",
-                html_content=res.to_html_report(),
+                html_content=res.to_html_report(
+                    source=report_source, baseline=self.combo_baseline.currentText(),
+                    prominence=self.spn_prominence.value(), distance=self.spn_distance.value(),
+                ),
                 parameters={"peaks_count": len(res.peaks), "total_area": res.total_area},
             )
             self.project.reports.append(rep)

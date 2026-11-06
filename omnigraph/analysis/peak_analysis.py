@@ -70,50 +70,29 @@ class PeakAnalysisResult:
         self.y_corrected = y_corrected
         self.total_area = total_area
 
-    def to_html_report(self) -> str:
-        """Generates rich HTML peak summary report with guaranteed high contrast."""
-        rows = ""
-        for i, p in enumerate(self.peaks):
-            bg = "#ffffff" if i % 2 == 0 else "#f8fafc"
-            rows += f"""
-            <tr style="background-color: {bg};">
-                <td style="padding: 6px 10px; font-weight: bold; color: #0f172a; border-bottom: 1px solid #e2e8f0;">Peak #{p.peak_id}</td>
-                <td style="padding: 6px 10px; font-family: monospace; color: #0f172a; border-bottom: 1px solid #e2e8f0;">{p.x_center:.4f}</td>
-                <td style="padding: 6px 10px; font-family: monospace; color: #0f172a; border-bottom: 1px solid #e2e8f0;">{p.net_height:.4f}</td>
-                <td style="padding: 6px 10px; font-family: monospace; color: #0f172a; border-bottom: 1px solid #e2e8f0;">{p.fwhm:.4f}</td>
-                <td style="padding: 6px 10px; font-family: monospace; color: #0f172a; border-bottom: 1px solid #e2e8f0;">{p.area:.4f}</td>
-                <td style="padding: 6px 10px; font-family: monospace; font-weight: bold; color: #0284c7; border-bottom: 1px solid #e2e8f0;">{p.rel_area_percent:.2f}%</td>
-            </tr>
-            """
+    def to_html_report(self, *, source="", baseline="", prominence=None, distance=None) -> str:
+        """Put the detection settings and total area above the measurements."""
+        from omnigraph.analysis.reporting import report_document, report_table, result_number
 
-        html = f"""
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #ffffff; color: #0f172a; max-width: 800px; padding: 16px;">
-            <div style="background-color: #0f766e; color: #ffffff; padding: 12px 16px; border-radius: 6px 6px 0 0;">
-                <h2 style="margin: 0; font-size: 16px; color: #ffffff; font-weight: 700;">Peak Integration Report</h2>
-                <div style="font-size: 11px; color: #ccfbf1; margin-top: 4px; font-weight: 500;">
-                    Detected {len(self.peaks)} peaks &nbsp;|&nbsp; Total Net Area: <strong>{self.total_area:.4f}</strong>
-                </div>
-            </div>
-            <div style="background-color: #ffffff; border: 1.5px solid #cbd5e1; border-top: none; padding: 12px; border-radius: 0 0 6px 6px;">
-                <table style="width: 100%; border-collapse: collapse; font-size: 11px; text-align: left; background-color: #ffffff;">
-                    <thead>
-                        <tr style="background-color: #f1f5f9; color: #0f172a;">
-                            <th style="padding: 8px 10px; color: #0f172a; font-weight: 700; border-bottom: 2px solid #cbd5e1;">Peak ID</th>
-                            <th style="padding: 8px 10px; color: #0f172a; font-weight: 700; border-bottom: 2px solid #cbd5e1;">Center (X)</th>
-                            <th style="padding: 8px 10px; color: #0f172a; font-weight: 700; border-bottom: 2px solid #cbd5e1;">Height (&Delta;Y)</th>
-                            <th style="padding: 8px 10px; color: #0f172a; font-weight: 700; border-bottom: 2px solid #cbd5e1;">FWHM (Width)</th>
-                            <th style="padding: 8px 10px; color: #0f172a; font-weight: 700; border-bottom: 2px solid #cbd5e1;">Area</th>
-                            <th style="padding: 8px 10px; color: #0f172a; font-weight: 700; border-bottom: 2px solid #cbd5e1;">% Area</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {rows}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-        """
-        return html
+        summary = [("Peaks detected", len(self.peaks)), ("Total net area", result_number(self.total_area))]
+        if baseline:
+            summary.extend([
+                ("Baseline", baseline),
+                ("Minimum prominence", f"{prominence:g}%" if prominence is not None else "—"),
+                ("Minimum spacing", f"{distance} points" if distance is not None else "—"),
+            ])
+        rows = [
+            (peak.peak_id, result_number(peak.x_center), result_number(peak.net_height),
+             result_number(peak.fwhm), result_number(peak.area), f"{peak.rel_area_percent:.2f}%")
+            for peak in self.peaks
+        ]
+        measurements = report_table(
+            ("Peak ID", "Center (X)", "Net height", "Width (FWHM)", "Area", "Area share"),
+            rows, numeric=(1, 2, 3, 4, 5),
+        ) if rows else "<p>No peaks matched these settings.</p>"
+        return report_document(
+            "Peak Integration", source=source, summary=summary, sections=[("Peak measurements", measurements)],
+        )
 
 
 class PeakAnalyzer:

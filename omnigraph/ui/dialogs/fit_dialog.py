@@ -65,7 +65,6 @@ class FitDialog(QDialog):
         for wb in self.project.workbooks:
             for s in wb.sheets:
                 self.combo_sheet.addItem(f"{wb.name} - {s.name}", (wb.name, s.name))
-        self.combo_sheet.currentIndexChanged.connect(self._on_sheet_changed)
         fl_src.addRow("Worksheet:", self.combo_sheet)
 
         self.combo_x_col = QComboBox()
@@ -156,8 +155,9 @@ class FitDialog(QDialog):
 
         # 4. Preview / Results Display
         self.txt_preview = QTextBrowser()
-        self.txt_preview.setMinimumHeight(70)
-        self.txt_preview.setMaximumHeight(110)
+        self.txt_preview.setObjectName("AnalysisReport")
+        self.txt_preview.setMinimumHeight(125)
+        self.txt_preview.setMaximumHeight(190)
         self.txt_preview.setHtml("<i>Click 'Preview fit' to evaluate and preview results.</i>")
         content_layout.addWidget(self.txt_preview)
 
@@ -183,6 +183,26 @@ class FitDialog(QDialog):
         layout.addLayout(btn_layout, stretch=0)
 
         self._populate_columns()
+        self.combo_sheet.currentIndexChanged.connect(self._on_sheet_changed)
+        curve = next((c for c in self.active_graph.curves if not c.is_fit_curve), None) if self.active_graph else None
+        if curve:
+            index = self.combo_sheet.findData((curve.source_workbook, curve.source_sheet))
+            if index >= 0:
+                self.combo_sheet.setCurrentIndex(index)
+                self.combo_x_col.setCurrentIndex(max(0, self.combo_x_col.findData(curve.x_col_idx)))
+                self.combo_y_col.setCurrentIndex(max(0, self.combo_y_col.findData(curve.y_col_idx)))
+        elif self.active_worksheet:
+            for index in range(self.combo_sheet.count()):
+                if self.project.get_worksheet(*self.combo_sheet.itemData(index)) is self.active_worksheet:
+                    self.combo_sheet.setCurrentIndex(index)
+                    break
+        self.combo_x_col.currentIndexChanged.connect(self._clear_fit_preview)
+        self.combo_y_col.currentIndexChanged.connect(self._clear_fit_preview)
+        self.combo_model.currentIndexChanged.connect(self._clear_fit_preview)
+        self.chk_fix_intercept.toggled.connect(self._clear_fit_preview)
+        self.chk_use_roi.toggled.connect(self._clear_fit_preview)
+        self.spn_roi_min.valueChanged.connect(self._clear_fit_preview)
+        self.spn_roi_max.valueChanged.connect(self._clear_fit_preview)
         from omnigraph.ui.dialogs.dialog_layout import fold_section, finish_dialog
         self.output_toggle, self.output_options = fold_section(grp_out, "Change fit outputs")
         summary = QLabel("Preview the fit, then add it to your project. The default adds the fitted curve, a report, and a results worksheet.")
@@ -190,7 +210,12 @@ class FitDialog(QDialog):
         layout.insertWidget(0, summary)
         finish_dialog(self, scroll_body=False)
 
+    def _clear_fit_preview(self):
+        self.last_fit_result = None
+        self.txt_preview.setPlainText("Settings changed. Preview the fit to see updated results.")
+
     def _on_sheet_changed(self):
+        self._clear_fit_preview()
         self._populate_columns()
 
     def _populate_columns(self):
@@ -274,20 +299,7 @@ class FitDialog(QDialog):
 
             self.last_fit_result = res
 
-            # Update preview box
-            params_str = ", ".join(f"<b>{k}:</b> {v:.4g}" for k, v in res.parameters.items())
-            app = QApplication.instance()
-            is_dark = getattr(app, "is_dark_theme", False)
-            text_col = "#cdd6f4" if is_dark else "#1e293b"
-            accent_col = "#38bdf8" if is_dark else "#0284c7"
-            html = f"""
-            <div style="font-size: 11px; color: {text_col};">
-                <b style="color: {accent_col};">{res.model_name}</b> | R² = <b>{res.r_squared:.5f}</b> | RMSE = {res.rmse:.4g}<br>
-                <code>{res.formula_str}</code><br>
-                {params_str}
-            </div>
-            """
-            self.txt_preview.setHtml(html)
+            self.txt_preview.setHtml(res.to_html_report(details=False))
             return res
 
         except Exception as e:
@@ -322,11 +334,16 @@ class FitDialog(QDialog):
             # 2. Overlay fitted curve on graph
             if self.chk_overlay_graph.isChecked() and self.active_graph:
                 src_curve = next(
-                    (c for c in self.active_graph.curves if c.source_sheet == sheet.name and c.y_col_idx == y_col_idx),
+                    (c for c in self.active_graph.curves
+                     if not c.is_fit_curve and c.source_workbook == wb.name and c.source_sheet == sheet_name
+                     and c.x_col_idx == x_col_idx and c.y_col_idx == y_col_idx),
                     None
                 )
-                src_id = src_curve.id if src_curve else (self.active_graph.curves[0].id if self.active_graph.curves else None)
+                src_id = src_curve.id if src_curve else None
                 model_code = self.combo_model.currentData()
+                live_fit = src_id and not self.chk_use_roi.isChecked() and not (
+                    model_code == "linear" and self.chk_fix_intercept.isChecked()
+                )
                 deg = 2 if model_code == "poly2" else (3 if model_code == "poly3" else None)
 
                 fit_curve = CurveModel(
@@ -342,7 +359,7 @@ class FitDialog(QDialog):
                     plot_type="line",
                     is_fit_curve=True,
                     fit_formula_str=res.formula_str,
-                    fit_model_name=model_code,
+                    fit_model_name=model_code if live_fit else None,
                     fit_source_curve_id=src_id,
                     fit_degree=deg,
                 )
@@ -362,10 +379,17 @@ class FitDialog(QDialog):
 
         # 3. Generate Scientific Report tab
         if self.chk_create_report.isChecked():
+            x = sheet.get_column(x_col_idx) if sheet else None
+            y = sheet.get_column(y_col_idx) if sheet else None
+            source = f"{wb_name} / {sheet_name}"
+            if x and y:
+                source += f" · {x.display_label} → {y.display_label}"
+            if len(res.x_orig):
+                source += f" · X range {np.min(res.x_orig):.6g} to {np.max(res.x_orig):.6g}"
             rep = ReportModel(
                 title=f"{res.model_name} Report",
                 report_type="fit",
-                html_content=res.to_html_report(),
+                html_content=res.to_html_report(source=source),
                 parameters=res.parameters,
             )
             self.project.reports.append(rep)

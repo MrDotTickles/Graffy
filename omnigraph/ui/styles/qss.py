@@ -88,6 +88,7 @@ QTabWidget#WorkspaceTabs QTabBar::tab:selected, QTabWidget#ChartEditorTabs QTabB
     background: @selection; color: @accent; border: none;
 }
 QToolBar#ChartWorkspaceToolbar { border-bottom: none; }
+QToolBar#ReportActions { border: none; padding: 2px 4px; }
 QTabBar::close-button { image: url(@close); subcontrol-position: right; width: 12px; height: 12px; margin-right: 4px; padding: 2px; }
 QTabBar::close-button:hover { image: url(@close_hover); }
 QScrollArea { border: none; background: @surface; }
@@ -99,6 +100,7 @@ QHeaderView::section { background: @inset; color: @muted; padding: 7px 9px; bord
 QHeaderView::section:checked { background: @soft; color: @accent; }
 QTableCornerButton::section { background: @inset; border: 1px solid @line; }
 QTextBrowser { background: @surface; border: 1px solid @line; padding: 12px; selection-background-color: @selection; }
+QTextBrowser#AnalysisReport { background: #ffffff; color: #17243b; padding: 0; selection-background-color: #dce6fc; selection-color: #17243b; }
 QStatusBar { background: @bg; color: @muted; border-top: 1px solid @line; padding: 3px 5px; }
 QStatusBar QLabel { color: @muted; }
 QLabel#StatusCoords { font-family: Consolas, monospace; padding: 0 8px; }

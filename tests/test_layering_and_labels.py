@@ -202,8 +202,8 @@ def test_main_window_layering_and_label_integration(qapp):
     assert 320 <= window.minimumWidth() <= available.width()
     assert 240 <= window.minimumHeight() <= available.height()
 
-    active_graph = window.get_active_graph()
-    assert active_graph is not None
+    active_graph = project.graphs[0]
+    assert window.get_active_graph() is None  # The worksheet tab is current.
     initial_curve_count = len(active_graph.curves)
 
     # Layer a selected column onto the active graph

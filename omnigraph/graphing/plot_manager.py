@@ -511,19 +511,7 @@ class PlotManager:
 
     def _get_curve_data_with_indices(self, curve: CurveModel) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray], np.ndarray]:
         """Extracts numeric arrays and valid worksheet row indices for a curve."""
-        wb = self.project.get_workbook(curve.source_workbook)
-        if not wb:
-            wb = self.project.workbooks[0] if self.project.workbooks else None
-        if not wb:
-            return np.array([]), np.array([]), None, np.array([], dtype=int)
-
-        sheet = None
-        for s in wb.sheets:
-            if s.name == curve.source_sheet:
-                sheet = s
-                break
-        if not sheet:
-            sheet = wb.get_active_sheet()
+        sheet = self.project.get_worksheet(curve.source_workbook, curve.source_sheet)
         if not sheet:
             return np.array([]), np.array([]), None, np.array([], dtype=int)
 
@@ -551,19 +539,7 @@ class PlotManager:
 
     def _get_curve_masked_data_with_indices(self, curve: CurveModel) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Extracts numeric arrays and row indices for masked points for a curve."""
-        wb = self.project.get_workbook(curve.source_workbook)
-        if not wb:
-            wb = self.project.workbooks[0] if self.project.workbooks else None
-        if not wb:
-            return np.array([]), np.array([]), np.array([], dtype=int)
-
-        sheet = None
-        for s in wb.sheets:
-            if s.name == curve.source_sheet:
-                sheet = s
-                break
-        if not sheet:
-            sheet = wb.get_active_sheet()
+        sheet = self.project.get_worksheet(curve.source_workbook, curve.source_sheet)
         if not sheet:
             return np.array([]), np.array([]), np.array([], dtype=int)
 

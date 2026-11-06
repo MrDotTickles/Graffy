@@ -460,6 +460,10 @@ class Project:
                 return wb
         return None
 
+    def get_worksheet(self, workbook_name: str, sheet_name: str) -> Optional[Worksheet]:
+        workbook = self.get_workbook(workbook_name)
+        return next((sheet for sheet in workbook.sheets if sheet.name == sheet_name), None) if workbook else None
+
     def get_graph(self, title_or_id: str) -> Optional[GraphModel]:
         for g in self.graphs:
             if g.title == title_or_id or g.id == title_or_id:

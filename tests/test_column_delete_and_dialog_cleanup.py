@@ -154,7 +154,8 @@ def test_dynamic_tooltip_reflects_selected_column(qapp):
     assert f"'A: {col_a.display_label}'" in win.act_del_col.toolTip()
     assert f"'A: {col_a.display_label}'" in sw.act_sheet_del_col.toolTip()
 
-    # Select column B
+    # Test column B by itself, independently of the previous selection.
+    sw.table_view.clearSelection()
     sw.table_view.selectColumn(1)
     sw._on_selection_changed()
     assert f"'B: {col_b.display_label}'" in win.act_del_col.toolTip()
@@ -218,8 +219,9 @@ def test_dialog_typography_cleanup(qapp):
     res = CurveFitter.linear_fit(np.linspace(1, 10, 20), np.linspace(2, 20, 20))
     fit_html = res.to_html_report()
     assert "font-size: 22px" not in fit_html
-    assert "font-size: 16px" in fit_html
-    assert "font-size: 11px" in fit_html
+    assert "<h2>Curve fit" in fit_html
+    assert "<h3>Fitted parameters</h3>" in fit_html
+    assert "font-size:" not in fit_html  # Report text follows interface zoom.
 
     # Stats dialog check: no 13px font
     from omnigraph.ui.dialogs.stats_dialog import StatsDialog

@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 
 from omnigraph.ai.data_extractor import SmartDataExtractor
+from omnigraph.core.worksheet import ColumnRole
 
 
 class ImportDialog(QDialog):
@@ -35,6 +36,7 @@ class ImportDialog(QDialog):
         parent=None,
         *,
         active_graph_title: Optional[str] = None,
+        plot_by_default: bool = False,
     ):
         super().__init__(parent)
         self.filepaths: List[str] = []
@@ -50,7 +52,9 @@ class ImportDialog(QDialog):
         self.auto_plot: bool = False
         self.plot_type: str = "line_symbol"
         self.active_graph_title = active_graph_title
+        self.plot_by_default = plot_by_default or active_graph_title is not None
         self.add_to_active_graph = False
+        self.series_choice = "first"
 
         self.setWindowTitle("Import data")
         self.resize(840, 600)
@@ -214,7 +218,7 @@ class ImportDialog(QDialog):
         bl.addWidget(self.combo_dest, 0, 1, 1, 3)
 
         self.chk_auto_plot = QCheckBox("📈 Auto-generate Comparison Graph")
-        self.chk_auto_plot.setChecked(True)
+        self.chk_auto_plot.setChecked(self.plot_by_default)
         bl.addWidget(self.chk_auto_plot, 1, 0, 1, 2)
 
         lbl_plot = QLabel("Plot Type:")
@@ -284,6 +288,21 @@ class ImportDialog(QDialog):
             self.chk_auto_plot.toggled.connect(self.graph_destination.setEnabled)
         else:
             self.graph_destination.hide()
+        series_row = QHBoxLayout()
+        series_label = QLabel("Plot series")
+        self.series_combo = QComboBox()
+        self.series_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.series_combo.setMinimumContentsLength(12)
+        self.series_combo.setAccessibleName("Plot series")
+        series_label.setBuddy(self.series_combo)
+        series_row.addWidget(series_label)
+        series_row.addWidget(self.series_combo, 1)
+        self.series_options = QWidget()
+        self.series_options.setLayout(series_row)
+        main_layout.insertWidget(3 if self.active_graph_title else 2, self.series_options)
+        self.series_options.setVisible(self.chk_auto_plot.isChecked())
+        self.chk_auto_plot.toggled.connect(self.series_options.setVisible)
+        self._update_plot_series()
         self.parsing_toggle, self.parsing_options = fold_section(grp_settings, "Adjust how data is read")
         self.destination_toggle, self.destination_options = fold_section(grp_batch, "Multiple-file and graph options")
         hint = QLabel("Choose files or paste text. Check the preview, then import. Headers and numbers are detected automatically on your computer.")
@@ -476,6 +495,27 @@ class ImportDialog(QDialog):
         self.tabs_source.setCurrentIndex(1)
         self.txt_paste.setPlainText(sample_spec)
 
+    def _update_plot_series(self, result=None):
+        previous = self.series_combo.currentData()
+        self.series_combo.clear()
+        self.series_combo.addItem("First Y series", "first")
+        self.series_combo.addItem("All Y series", "all")
+        if result is not None and (self.tabs_source.currentIndex() == 1 or len(self.filepaths) == 1):
+            columns = list(result.dataframe.columns)
+            y_indices = [index for index, name in enumerate(columns)
+                         if result.column_roles.get(name, ColumnRole.Y) == ColumnRole.Y]
+            if not y_indices and columns:
+                y_indices = [1 if len(columns) > 1 else 0]
+            for index in y_indices:
+                name = columns[index]
+                label = result.column_long_names.get(name, str(name))
+                units = result.column_units.get(name)
+                if units:
+                    label = f"{label} ({units})"
+                self.series_combo.addItem(label, ("column", index))
+        index = self.series_combo.findData(previous)
+        self.series_combo.setCurrentIndex(max(0, index))
+
     def _render_preview(self, result, title):
         frame = result.dataframe
         preview = frame.head(15)
@@ -489,6 +529,7 @@ class ImportDialog(QDialog):
                 display = "" if pd.isna(value) else (f"{value:.5g}" if isinstance(value, float) else str(value))
                 self.table_prev.setItem(row, column, QTableWidgetItem(display))
 
+        self._update_plot_series(result)
         metadata = result.metadata
         self.lbl_preview_title.setText(f"{title} · {len(frame):,} rows × {len(frame.columns)} numeric columns")
         row = metadata.get("HeaderRow", 1)
@@ -523,6 +564,7 @@ class ImportDialog(QDialog):
         self.lbl_preview_title.setText("Data preview")
         self.preview_details.setText(message)
         self.preview_details.setToolTip("")
+        self._update_plot_series()
         self.btn_ok.setEnabled(False)
 
     def _reading_options(self):
@@ -644,5 +686,6 @@ class ImportDialog(QDialog):
         self.auto_plot = self.chk_auto_plot.isChecked()
         self.plot_type = self.combo_plot_type.currentText()
         self.add_to_active_graph = self.auto_plot and self.graph_destination.currentData() is True
+        self.series_choice = self.series_combo.currentData()
 
         self.accept()

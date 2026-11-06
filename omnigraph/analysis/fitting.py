@@ -60,71 +60,38 @@ class FitResult:
         self.success = success
         self.message = message
 
-    def to_html_report(self) -> str:
-        """Generate Origin-style publication fit report in rich HTML."""
-        rows_params = ""
-        for i, (name, val) in enumerate(self.parameters.items()):
-            err = self.param_errors.get(name, 0.0)
-            ci_low = val - 1.96 * err if err else val
-            ci_high = val + 1.96 * err if err else val
-            bg = "#ffffff" if i % 2 == 0 else "#f8fafc"
-            rows_params += f"""
-            <tr style="background-color: {bg};">
-                <td style="font-weight: bold; color: #0f172a; padding: 6px 10px; border-bottom: 1px solid #e2e8f0;">{name}</td>
-                <td style="padding: 6px 10px; border-bottom: 1px solid #e2e8f0; font-family: monospace; color: #0f172a;">{val:.6g}</td>
-                <td style="padding: 6px 10px; border-bottom: 1px solid #e2e8f0; font-family: monospace; color: #0f172a;">&plusmn; {err:.6g}</td>
-                <td style="padding: 6px 10px; border-bottom: 1px solid #e2e8f0; font-family: monospace; color: #0f172a;">[{ci_low:.6g}, {ci_high:.6g}]</td>
-            </tr>
-            """
+    def to_html_report(self, *, source="", details=True) -> str:
+        """Summarize the model, then show fit quality and parameter estimates."""
+        from omnigraph.analysis.reporting import report_document, report_table, result_number
 
-        html = f"""
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #ffffff; color: #0f172a; max-width: 800px; padding: 16px;">
-            <div style="background-color: #1e3a8a; color: #ffffff; padding: 12px 16px; border-radius: 6px 6px 0 0;">
-                <h2 style="margin: 0; font-size: 16px; color: #ffffff; font-weight: 700;">Curve Fit Report: {self.model_name}</h2>
-                <div style="font-size: 11px; color: #dbeafe; margin-top: 4px; font-weight: 500;">Equation: <code style="background-color: #1e40af; color: #ffffff; padding: 2px 6px; border-radius: 4px;">{self.formula_str}</code></div>
-            </div>
-            
-            <div style="background-color: #ffffff; border: 1.5px solid #cbd5e1; border-top: none; padding: 12px; border-radius: 0 0 6px 6px;">
-                <h3 style="font-size: 13px; margin-top: 0; color: #1e3a8a; border-bottom: 2px solid #cbd5e1; padding-bottom: 4px; font-weight: 700;">Goodness of Fit</h3>
-                <table style="width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 11px; background-color: #ffffff;">
-                    <tr>
-                        <td style="padding: 5px 8px; width: 35%; color: #475569; font-weight: 600;">Number of Points (N):</td>
-                        <td style="padding: 5px 8px; font-weight: bold; color: #0f172a;">{len(self.x_orig)}</td>
-                        <td style="padding: 5px 8px; width: 35%; color: #475569; font-weight: 600;">Degrees of Freedom:</td>
-                        <td style="padding: 5px 8px; font-weight: bold; color: #0f172a;">{self.dof}</td>
-                    </tr>
-                    <tr style="background-color: #f8fafc;">
-                        <td style="padding: 5px 8px; color: #475569; font-weight: 600;">R-Square (R&sup2;):</td>
-                        <td style="padding: 5px 8px; font-weight: bold; color: #0284c7;">{self.r_squared:.6f}</td>
-                        <td style="padding: 5px 8px; color: #475569; font-weight: 600;">Adj. R-Square:</td>
-                        <td style="padding: 5px 8px; font-weight: bold; color: #0f172a;">{self.adj_r_squared:.6f}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 5px 8px; color: #475569; font-weight: 600;">Root MSE (RMSE):</td>
-                        <td style="padding: 5px 8px; font-weight: bold; color: #0f172a;">{self.rmse:.6g}</td>
-                        <td style="padding: 5px 8px; color: #475569; font-weight: 600;">Residual Sum of Squares (RSS):</td>
-                        <td style="padding: 5px 8px; font-weight: bold; color: #0f172a;">{self.rss:.6g}</td>
-                    </tr>
-                </table>
-
-                <h3 style="font-size: 13px; color: #1e3a8a; border-bottom: 2px solid #cbd5e1; padding-bottom: 4px; font-weight: 700;">Fitted Parameters</h3>
-                <table style="width: 100%; border-collapse: collapse; font-size: 11px; text-align: left; background-color: #ffffff;">
-                    <thead>
-                        <tr style="background-color: #f1f5f9; color: #0f172a;">
-                            <th style="padding: 6px 10px; color: #0f172a; font-weight: 700; border-bottom: 2px solid #cbd5e1;">Parameter</th>
-                            <th style="padding: 6px 10px; color: #0f172a; font-weight: 700; border-bottom: 2px solid #cbd5e1;">Value</th>
-                            <th style="padding: 6px 10px; color: #0f172a; font-weight: 700; border-bottom: 2px solid #cbd5e1;">Standard Error</th>
-                            <th style="padding: 6px 10px; color: #0f172a; font-weight: 700; border-bottom: 2px solid #cbd5e1;">95% Confidence Interval</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {rows_params}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-        """
-        return html
+        parameters = []
+        for name, value in self.parameters.items():
+            error = self.param_errors.get(name)
+            interval = (
+                f"{result_number(value - 1.96 * error)} to {result_number(value + 1.96 * error)}"
+                if error is not None and np.isfinite(error) else "—"
+            )
+            parameters.append((name, result_number(value), result_number(error), interval))
+        summary = [
+            ("Equation", self.formula_str),
+            ("Points fitted", len(self.x_orig)),
+            ("R²", result_number(self.r_squared)),
+            ("Root mean square error (RMSE)", result_number(self.rmse)),
+        ]
+        if details:
+            summary.extend([
+                ("Adjusted R²", result_number(self.adj_r_squared)),
+                ("Residual sum of squares", result_number(self.rss)),
+                ("Degrees of freedom", self.dof),
+            ])
+        table = report_table(
+            ("Parameter", "Estimate", "Std. error", "Approx. 95% interval"),
+            parameters, numeric=(1, 2, 3),
+        )
+        return report_document(
+            f"Curve fit · {self.model_name}", source=source, summary=summary,
+            sections=[("Fitted parameters", table)],
+        )
 
 
 class CurveFitter:

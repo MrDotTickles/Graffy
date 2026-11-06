@@ -100,7 +100,7 @@ def test_extraction_from_file_with_whitespace_delimiters(tmp_path):
 
 def test_instrument_log_preview_and_plot(qapp):
     window = MainWindow(Project.create_default("Instrument log"))
-    dialog = ImportDialog(parent=window)
+    dialog = ImportDialog(parent=window, plot_by_default=True)
     dialog._load_sample_hplc()
     assert not dialog.imported_dataframe.empty
     dialog._on_accept()
@@ -264,7 +264,7 @@ def test_x01_binary_format_extraction(tmp_path):
 
 def test_xrd_sample_preview_and_plot(qapp):
     window = MainWindow(Project.create_default("XRD sample"))
-    dialog = ImportDialog(parent=window)
+    dialog = ImportDialog(parent=window, plot_by_default=True)
     dialog._load_sample_xrd()
     assert "Omega (arcsec)" in dialog.imported_dataframe.columns
     assert "Intensity (Counts)" in dialog.imported_dataframe.columns
