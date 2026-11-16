@@ -388,19 +388,19 @@ def test_conditional_symbol_options_visibility(qapp):
     assert dlg_add.combo_line_style.isHidden() is False
 
     # Change to 'line'
-    dlg_add.combo_plot_type.setCurrentText("line")
+    dlg_add.combo_plot_type.setCurrentIndex(dlg_add.combo_plot_type.findData("line"))
     assert dlg_add.combo_marker.isHidden() is True
     assert dlg_add.lbl_marker.isHidden() is True
     assert dlg_add.combo_line_style.isHidden() is False
 
     # Change to 'bar'
-    dlg_add.combo_plot_type.setCurrentText("bar")
+    dlg_add.combo_plot_type.setCurrentIndex(dlg_add.combo_plot_type.findData("bar"))
     assert dlg_add.combo_marker.isHidden() is True
     assert dlg_add.lbl_marker.isHidden() is True
     assert dlg_add.combo_line_style.isHidden() is True
 
     # Change to 'scatter'
-    dlg_add.combo_plot_type.setCurrentText("scatter")
+    dlg_add.combo_plot_type.setCurrentIndex(dlg_add.combo_plot_type.findData("scatter"))
     assert dlg_add.combo_marker.isHidden() is False
     assert dlg_add.combo_line_style.isHidden() is True
 

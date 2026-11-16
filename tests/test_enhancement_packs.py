@@ -359,6 +359,7 @@ class TestUIDragDropAndCanvas:
             return dialog.result()
 
         monkeypatch.setattr(ImportDialog, "exec", accept_preview)
+        monkeypatch.setattr(window, "_choose_drop_layout", lambda *args: "add")
         window.get_active_graph_widget()._on_files_dropped([path])
         return previews
 

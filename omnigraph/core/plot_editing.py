@@ -79,7 +79,8 @@ def change_graph_plot_type(graph, plot_type):
     for curve in curves:
         change_series_plot_type(curve, plot_type)
     graph.plot_type = plot_type
-    graph.x_auto_limits = graph.y_auto_limits = graph.y2_auto_limits = True
+    graph.x_auto_limits = graph.y_auto_limits = graph.y2_auto_limits = graph.y_bottom_auto_limits = True
+    graph.right_panel_x_auto_limits = graph.right_panel_y_auto_limits = True
     return True
 
 
@@ -105,3 +106,54 @@ def rebind_chart_data(graph, mappings, *, copy_title=None):
     graph.curves = measured
     graph.annotations = [ann for ann in graph.annotations if ann.get("type") not in {"band", "bracket", "significance"}]
     return graph
+
+
+
+def chart_setup(graph, project):
+    """Capture chart styling and column descriptions without copying data."""
+    from omnigraph.core.column_matching import column_signature
+
+    specification = []
+    style = graph.to_dict()
+    style["curves"] = []
+    style["annotations"] = []
+    for curve in graph.curves:
+        if curve.is_fit_curve:
+            continue
+        source = project.get_worksheet(curve.source_workbook, curve.source_sheet)
+        if source is None:
+            raise ValueError("Every series needs a source worksheet to save this setup.")
+        columns = [source.get_column(index) for index in (curve.x_col_idx, curve.y_col_idx, curve.y_err_col_idx)]
+        if any(column is None for column in columns[:2]):
+            raise ValueError("Every series needs X and Y columns to save this setup.")
+        specification.append([column_signature(column) if column else None for column in columns])
+        curve_style = curve.to_dict()
+        curve_style["source_workbook"] = curve_style["source_sheet"] = ""
+        style["curves"].append(curve_style)
+    if not specification:
+        raise ValueError("Add some worksheet data to the chart first.")
+    return {"style": style, "columns": specification}
+
+
+def match_series(sheet, signatures):
+    """Resolve an X, Y and optional error column using unique metadata."""
+    from omnigraph.core.column_matching import match_column
+
+    return [match_column(sheet, signature) for signature in signatures]
+
+
+def chart_setup_mappings(setup, workbook_name, sheet):
+    from omnigraph.core.column_matching import numeric_pairs
+
+    mappings = []
+    matched_pairs = set()
+    for signatures in setup["columns"]:
+        x, y, error = match_series(sheet, signatures)
+        if signatures[2] is not None and error is None:
+            return []
+        values, _ = numeric_pairs(sheet, x, y)
+        if not len(values) or (x, y) in matched_pairs:
+            return []
+        matched_pairs.add((x, y))
+        mappings.append((workbook_name, sheet.name, x, y, error, sheet.columns[y].display_label))
+    return mappings

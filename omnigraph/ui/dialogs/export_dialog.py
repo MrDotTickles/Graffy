@@ -6,16 +6,19 @@ live thumbnail preview, and native clipboard copying.
 """
 
 import os
+from pathlib import Path
+import re
 from typing import Tuple, Optional
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout,
     QGroupBox, QComboBox, QDoubleSpinBox, QSpinBox, QCheckBox,
     QLineEdit, QPushButton, QLabel, QFileDialog, QMessageBox,
-    QFrame, QApplication, QSizePolicy
+    QFrame, QApplication, QSizePolicy, QProgressDialog
 )
 from PyQt6.QtCore import Qt, QByteArray, QTimer, QSize, QMimeData
 from PyQt6.QtGui import QImage, QPixmap, QIcon, QClipboard, QFont
 from omnigraph.graphing.plot_manager import PlotManager
+from omnigraph.ui.saved_settings import load_settings, store_settings
 
 
 class ExportDialog(QDialog):
@@ -32,10 +35,11 @@ class ExportDialog(QDialog):
         ("Custom Dimensions...", None, None),
     ]
 
-    def __init__(self, plot_manager: PlotManager, parent=None):
+    def __init__(self, plot_manager: PlotManager, parent=None, *, batch_graphs=None):
         super().__init__(parent)
         self.plot_manager = plot_manager
-        self.setWindowTitle("Save or copy graph")
+        self.batch_graphs = batch_graphs
+        self.setWindowTitle("Export charts" if batch_graphs else "Save or copy graph")
         self.resize(760, 560)
         self.setMinimumSize(660, 480)
 
@@ -47,6 +51,7 @@ class ExportDialog(QDialog):
 
         self._init_ui()
         self._apply_preset(0)
+        self._restore_options()
         self._update_preview()
 
     def _init_ui(self):
@@ -58,8 +63,9 @@ class ExportDialog(QDialog):
         is_dark = getattr(app, "is_dark_theme", False) or "background-color: #181825" in (app.styleSheet() if app else "")
         sub_color = "#a6adc8" if is_dark else "#475569"
         border_color = "#313244" if is_dark else "#e2e8f0"
+        heading = f"Save {len(self.batch_graphs)} charts" if self.batch_graphs else "Save your graph"
         header = QLabel(
-            f"<h3 style='margin:0; color:#4f46e5;'>Save your graph</h3>"
+            f"<h3 style='margin:0; color:#4f46e5;'>{heading}</h3>"
             f"<span style='color:{sub_color};'>Choose an image format and where to save it. "
             "Use PNG for images, or PDF and SVG for scalable figures.</span>"
         )
@@ -200,7 +206,7 @@ class ExportDialog(QDialog):
 
         # --- RIGHT PANEL: Live Visual Preview ---
         right_panel = QVBoxLayout()
-        grp_preview = QGroupBox("Figure Preview")
+        grp_preview = QGroupBox("First chart preview" if self.batch_graphs else "Figure preview")
         prev_layout = QVBoxLayout(grp_preview)
         prev_layout.setSpacing(8)
 
@@ -231,15 +237,14 @@ class ExportDialog(QDialog):
         main_layout.addLayout(content_layout)
 
         # --- Destination File Path ---
-        path_group = QGroupBox("Destination File")
+        path_group = QGroupBox("Destination folder" if self.batch_graphs else "Destination file")
         path_layout = QHBoxLayout(path_group)
         self.txt_path = QLineEdit()
         # Clean default name based on model title
-        import re
-        clean_title = re.sub(r'[<>:"/\\|?*]', "_", self.plot_manager.model.title or "Graph").strip(" .").replace(" ", "_") or "Graph"
+        clean_title = self._export_name(self.plot_manager.model.title)
         from PyQt6.QtCore import QStandardPaths
         destination = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation) or os.path.expanduser("~")
-        self.txt_path.setText(os.path.join(destination, f"{clean_title}.png"))
+        self.txt_path.setText(destination if self.batch_graphs else os.path.join(destination, f"{clean_title}.png"))
         path_layout.addWidget(self.txt_path)
 
         btn_browse = QPushButton("Browse...")
@@ -258,6 +263,7 @@ class ExportDialog(QDialog):
             self.btn_copy_clipboard.setStyleSheet("")
         self.btn_copy_clipboard.clicked.connect(self._on_copy_to_clipboard)
         bottom_bar.addWidget(self.btn_copy_clipboard)
+        self.btn_copy_clipboard.setHidden(bool(self.batch_graphs))
 
         self.lbl_copy_status = QLabel("")
         self.lbl_copy_status.setStyleSheet("color: #16a34a; font-weight: bold; padding-left: 8px;")
@@ -269,7 +275,7 @@ class ExportDialog(QDialog):
         btn_cancel.clicked.connect(self.reject)
         bottom_bar.addWidget(btn_cancel)
 
-        self.btn_export = QPushButton("Save graph")
+        self.btn_export = QPushButton(f"Save {len(self.batch_graphs)} charts" if self.batch_graphs else "Save graph")
         self.btn_export.setDefault(True)
         self.btn_export.setProperty("role","primary")
         self.btn_export.setStyleSheet("")
@@ -436,9 +442,9 @@ class ExportDialog(QDialog):
 
     def _on_format_changed(self):
         ext = self.combo_format.currentData()
-        current = self.txt_path.text()
-        base, _ = os.path.splitext(current)
-        self.txt_path.setText(f"{base}.{ext}")
+        if not self.batch_graphs:
+            base, _ = os.path.splitext(self.txt_path.text())
+            self.txt_path.setText(f"{base}.{ext}")
 
         # Vector formats disable DPI, bitmap formats enable DPI
         is_vector = ext in ("pdf", "svg")
@@ -449,6 +455,11 @@ class ExportDialog(QDialog):
         self.chk_transparent.setEnabled(ext in ("png", "svg", "tiff"))
 
     def _browse_path(self):
+        if self.batch_graphs:
+            folder = QFileDialog.getExistingDirectory(self, "Export charts to", self.txt_path.text())
+            if folder:
+                self.txt_path.setText(folder)
+            return
         ext = self.combo_format.currentData()
         filter_str = f"{ext.upper()} Files (*.{ext})"
         path, _ = QFileDialog.getSaveFileName(self, "Export Figure", self.txt_path.text(), filter_str)
@@ -518,29 +529,117 @@ class ExportDialog(QDialog):
         self.lbl_copy_status.setText(f"[OK] Copied to clipboard ({px_w} x {px_h} px)!")
         QTimer.singleShot(4000, lambda: self.lbl_copy_status.setText(""))
 
+    @staticmethod
+    def _export_name(title):
+        name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", title or "Graph").strip(" .")
+        name = name.replace(" ", "_")[:100].rstrip(" .") or "Graph"
+        if re.fullmatch(r"CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9]", name.split(".")[0], flags=re.I):
+            name = f"Graph_{name}"
+        return name
+
+    def _export_options(self):
+        return dict(dpi=self.get_dpi(), transparent=self.chk_transparent.isEnabled() and self.chk_transparent.isChecked(),
+                    width_in=self._width_in, height_in=self._height_in, tight_crop=self.chk_tight.isChecked())
+
+    def _remember_options(self):
+        store_settings("export/options", {
+            **self._export_options(),
+            "format": self.combo_format.currentData(),
+            "preset": self.combo_presets.currentIndex(),
+        })
+
+    def _restore_options(self):
+        options = load_settings("export/options")
+        if not options:
+            return
+        self.combo_format.setCurrentIndex(max(0, self.combo_format.findData(options.get("format"))))
+        dpi = options.get("dpi")
+        if isinstance(dpi, int) and dpi > 0:
+            index = self.combo_dpi.findData(dpi)
+            self.combo_dpi.setCurrentIndex(index if index >= 0 else self.combo_dpi.findData(-1))
+            if index < 0:
+                self.spn_custom_dpi.setValue(dpi)
+        preset = options.get("preset")
+        if isinstance(preset, int) and 0 <= preset < len(self.PRESETS):
+            self.combo_presets.setCurrentIndex(preset)
+        if preset == len(self.PRESETS) - 1:
+            width, height = options.get("width_in"), options.get("height_in")
+            if all(isinstance(value, (float, int)) and 0.5 <= value <= 100 for value in (width, height)):
+                self._width_in, self._height_in = width, height
+                self._aspect_ratio = width / height
+                self._sync_spinboxes_from_inches()
+                self._update_dim_summary()
+        self.chk_transparent.setChecked(options.get("transparent") is True)
+        self.chk_tight.setChecked(options.get("tight_crop") is not False)
+
+    def _export_batch(self, folder):
+        if not folder.is_dir():
+            QMessageBox.warning(self, "Choose a folder", "Choose an existing folder for your exported charts.")
+            return
+        extension = self.combo_format.currentData()
+        options = self._export_options()
+        project = self.plot_manager.project
+        errors = []
+        count = 0
+        progress = QProgressDialog("Saving charts…", "Stop", 0, len(self.batch_graphs), self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        for index, graph in enumerate(self.batch_graphs):
+            progress.setValue(index)
+            if progress.wasCanceled():
+                break
+            name = self._export_name(graph.title)
+            try:
+                manager = PlotManager(graph, project)
+                manager.render()
+                suffix = 1
+                while True:
+                    path = folder / (f"{name}.{extension}" if suffix == 1 else f"{name}_{suffix}.{extension}")
+                    try:
+                        stream = path.open("xb")
+                        break
+                    except FileExistsError:
+                        suffix += 1
+                try:
+                    with stream:
+                        manager.export_image(stream, file_format=extension, **options)
+                except Exception:
+                    path.unlink(missing_ok=True)
+                    raise
+                count += 1
+            except Exception as error:
+                errors.append(f"{graph.title}: {error}")
+        progress.close()
+        summary = f"Saved {count} of {len(self.batch_graphs)} charts to {folder}."
+        if count:
+            self._remember_options()
+        if errors:
+            QMessageBox.warning(self, "Chart export", summary + "\n\n" + "\n".join(errors[:5]))
+        else:
+            QMessageBox.information(self, "Chart export", summary)
+        if count:
+            self.accept()
+
     def _on_export(self):
         path = self.txt_path.text().strip()
+        if self.batch_graphs and path:
+            self._export_batch(Path(path))
+            return
         if not path:
             QMessageBox.warning(self, "Path Error", "Please specify an export destination file path.")
             return
 
+        if not Path(path).suffix:
+            path = f"{path}.{self.combo_format.currentData()}"
+            self.txt_path.setText(path)
         if os.path.exists(path):
             answer = QMessageBox.question(self, "Replace existing file?", "A file with this name already exists. Replace it?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
             if answer != QMessageBox.StandardButton.Yes:
                 return
         dpi = self.get_dpi()
-        transparent = self.chk_transparent.isChecked()
-        tight = self.chk_tight.isChecked()
-
         try:
-            self.plot_manager.export_image(
-                path,
-                dpi=dpi,
-                transparent=transparent,
-                width_in=self._width_in,
-                height_in=self._height_in,
-                tight_crop=tight,
-            )
+            self.plot_manager.export_image(path, **self._export_options())
+            self._remember_options()
             px_w = int(round(self._width_in * dpi))
             px_h = int(round(self._height_in * dpi))
             QMessageBox.information(
@@ -548,7 +647,7 @@ class ExportDialog(QDialog):
                 "Export Successful",
                 f"Figure exported successfully!\n\n"
                 f"Destination: {path}\n"
-                f"Dimensions: {px_w} x {px_h} px @ {dpi} DPI\n"
+                f"{'Canvas before trimming' if self.chk_tight.isChecked() else 'Dimensions'}: {px_w} x {px_h} px @ {dpi} DPI\n"
                 f"Physical Size: {self._width_in:.2f} x {self._height_in:.2f} inches"
             )
             self.accept()

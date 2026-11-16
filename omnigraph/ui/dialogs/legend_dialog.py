@@ -9,11 +9,18 @@ from omnigraph.graphing.themes import get_theme_palette
 from omnigraph.ui.dialogs.dialog_layout import finish_dialog
 
 class LegendEditorDialog(QDialog):
+    LEGEND_FIELDS = (
+        "legend_show", "legend_location", "legend_frame", "legend_font_size",
+        "legend_text_color", "legend_face_color", "legend_edge_color", "legend_frame_alpha",
+    )
+
     def __init__(self,graph,parent=None,on_apply_callback=None,project=None):
         super().__init__(parent)
         self.graph=graph
         self.project=project
         self.on_apply_callback=on_apply_callback
+        self._original = self._snapshot()
+        self._previewed = False
         self.setWindowTitle("Series and legend")
         self.resize(620,580)
         self._init_ui()
@@ -110,7 +117,7 @@ class LegendEditorDialog(QDialog):
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
         buttons=QHBoxLayout()
-        self.btn_apply=QPushButton("Apply")
+        self.btn_apply=QPushButton("Preview on chart")
         self.btn_apply.clicked.connect(self._apply_changes)
         buttons.addWidget(self.btn_apply)
         buttons.addStretch()
@@ -142,17 +149,29 @@ class LegendEditorDialog(QDialog):
             self.table_series.setItem(row,3,QTableWidgetItem(curve.label or f"Curve {row+1}"))
             self.table_series.setRowHeight(row,40)
 
+    def _snapshot(self):
+        fields = {key: getattr(self.graph, key) for key in self.LEGEND_FIELDS}
+        curves = [(c, c.label, c.color, c.visible, c.marker_face_color, c.marker_edge_color)
+                  for c in self.graph.curves]
+        return fields, curves
+
+    def _restore(self, snapshot):
+        fields, curves = snapshot
+        for key, value in fields.items():
+            setattr(self.graph, key, value)
+        for curve, label, color, visible, fill, edge in curves:
+            curve.label, curve.color, curve.visible = label, color, visible
+            curve.marker_face_color, curve.marker_edge_color = fill, edge
+
     def _apply_changes(self):
-        fields=("legend_show","legend_location","legend_frame","legend_font_size","legend_text_color","legend_face_color","legend_edge_color","legend_frame_alpha")
-        previous={key:getattr(self.graph,key) for key in fields}
-        previous_curves=[(c,c.label,c.color,c.visible,c.marker_face_color,c.marker_edge_color) for c in self.graph.curves]
+        previous = self._snapshot()
+        palette = get_theme_palette(self.graph.theme)
         try:
             # Commit any active cell editor before reading names.
             self.table_series.setFocus()
             for row,curve in enumerate(self.graph.curves[:self.table_series.rowCount()]):
                 item=self.table_series.item(row,3)
                 curve.label=(item.text().strip() if item else "") or f"Curve {row+1}"
-                palette=get_theme_palette(self.graph.theme)
                 effective=palette[row%len(palette)] if curve.color=="auto" else curve.color
                 set_series_color(curve,self.color_buttons[row].color(),effective)
                 curve.visible=self.table_series.item(row,0).checkState()==Qt.CheckState.Checked
@@ -166,19 +185,28 @@ class LegendEditorDialog(QDialog):
             self.graph.legend_frame_alpha=self.opacity.value()/100
             if callable(self.on_apply_callback):
                 self.on_apply_callback()
-            self.status.setText("Changes applied to the figure.")
+            self._previewed = True
+            self.status.setText("Previewing on the chart. Save to keep these changes.")
             return True
         except Exception as error:
-            for key,value in previous.items():
-                setattr(self.graph,key,value)
-            for curve,label,color,visible,fill,edge in previous_curves:
-                curve.label,curve.color,curve.visible=label,color,visible
-                curve.marker_face_color,curve.marker_edge_color=fill,edge
-            QMessageBox.warning(self,"Could not apply changes",str(error))
+            self._restore(previous)
+            QMessageBox.warning(self, "Could not preview changes", str(error))
             return False
+
+    def reject(self):
+        if self._previewed:
+            self._previewed = False
+            self._restore(self._original)
+            try:
+                if callable(self.on_apply_callback):
+                    self.on_apply_callback()
+            except Exception as error:
+                QMessageBox.warning(self, "Could not redraw the chart", str(error))
+        super().reject()
 
     def _on_ok(self):
         if self._apply_changes():
+            self._previewed = False
             self.accept()
 
     def _preset_number_series(self):

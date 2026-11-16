@@ -3,6 +3,7 @@ from pathlib import Path
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtWidgets import (QDialog,QVBoxLayout,QLabel,QPushButton,
                             QScrollArea,QWidget,QCheckBox,QMenu,QToolButton)
+from omnigraph.ui.dialogs.dialog_layout import finish_dialog
 from omnigraph.ui.styles.design import icon
 
 class WelcomeDialog(QDialog):
@@ -11,8 +12,7 @@ class WelcomeDialog(QDialog):
         self.choice = None
         self.recent_path = None
         self.setWindowTitle("Welcome to Graffy")
-        available=self.screen().availableGeometry()
-        self.resize(min(560,available.width()-32),min(650,available.height()-48))
+        self.resize(520, 560)
         outer=QVBoxLayout(self)
         outer.setContentsMargins(16,16,16,16)
         scroll=QScrollArea()
@@ -25,25 +25,26 @@ class WelcomeDialog(QDialog):
         brand=QLabel("graffy")
         brand.setObjectName("Brand")
         content.addWidget(brand)
-        title=QLabel("From data to a figure worth sharing.")
+        title=QLabel("Start with your data")
         title.setProperty("role","heading")
         title.setWordWrap(True)
         content.addWidget(title)
-        intro=QLabel("Import your data, create a chart, and export a clear result. Choose where to begin.")
+        intro=QLabel("Import an Excel, CSV, text, or instrument file, or pick up a project you already started.")
         intro.setProperty("role","muted")
         intro.setWordWrap(True)
         content.addWidget(intro)
         content.addSpacing(6)
         for label,description,choice,glyph in [
             ("Import data","Excel, CSV, text, or instrument files","import","import"),
-            ("Open a project","Continue a saved Graffy project","open","folder"),
-            ("Explore an example","Try a complete scientific graph","sample","chart"),
-            ("Blank worksheet","Type or paste your own values","new","sheet")]:
-            button=QPushButton(label+"\n"+description)
+            ("Open project","Continue a saved Graffy project","open","folder"),
+            ("Open example","Try a complete scientific graph","sample","chart"),
+            ("Blank sheet","Type or paste your own values","new","sheet")]:
+            button=QPushButton(label)
+            button.setToolTip(description)
             button.setObjectName("WelcomeChoice")
             button.setIcon(icon(glyph,"#ffffff" if choice=="import" else None))
             button.setIconSize(QSize(24,24))
-            button.setMinimumHeight(66)
+            button.setMinimumHeight(48)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             if choice=="import":
                 button.setProperty("role","primary")
@@ -71,12 +72,14 @@ class WelcomeDialog(QDialog):
         content.addStretch()
         scroll.setWidget(body)
         outer.addWidget(scroll,1)
-        self.show_again=QCheckBox("Show this when Graffy starts")
+        self.show_again=QCheckBox("Show at startup")
         self.show_again.setChecked(True)
         outer.addWidget(self.show_again)
-        close=QPushButton("Continue to workspace")
+        close=QPushButton("Continue")
+        close.setToolTip("Continue to the workspace")
         close.clicked.connect(self.reject)
         outer.addWidget(close)
+        finish_dialog(self, scroll_body=False)
 
     def open_recent(self, path):
         self.recent_path = path

@@ -110,7 +110,7 @@ class FitDialog(QDialog):
         fl_model.addRow("", self.chk_fix_intercept)
 
         # ROI Range: multi-line layout to prevent horizontal overflow
-        self.chk_use_roi = QCheckBox("Fit Selected ROI Range Only")
+        self.chk_use_roi = QCheckBox("Fit within an X range")
         fl_model.addRow("", self.chk_use_roi)
 
         self.spn_roi_min = QDoubleSpinBox()
@@ -123,20 +123,33 @@ class FitDialog(QDialog):
             self.spn_roi_min.setValue(self.roi_range[0])
             self.spn_roi_max.setValue(self.roi_range[1])
 
-        roi_layout = QHBoxLayout()
-        roi_layout.addWidget(QLabel("Min X:"))
-        roi_layout.addWidget(self.spn_roi_min)
-        roi_layout.addWidget(QLabel("Max X:"))
-        roi_layout.addWidget(self.spn_roi_max)
-        fl_model.addRow("Range Bounds:", roi_layout)
+        fl_model.addRow("Minimum X", self.spn_roi_min)
+        fl_model.addRow("Maximum X", self.spn_roi_max)
+        self.spn_roi_min.setAccessibleName("Minimum X for fit")
+        self.spn_roi_max.setAccessibleName("Maximum X for fit")
+
+        def show_range(checked):
+            fl_model.setRowVisible(self.spn_roi_min, checked)
+            fl_model.setRowVisible(self.spn_roi_max, checked)
+
+        self.chk_use_roi.toggled.connect(show_range)
+        show_range(self.chk_use_roi.isChecked())
+
+        def show_intercept():
+            fl_model.setRowVisible(self.chk_fix_intercept, self.combo_model.currentData() == "linear")
+
+        self.combo_model.currentIndexChanged.connect(show_intercept)
+        show_intercept()
 
         content_layout.addWidget(grp_model)
 
         # 3. Output Options
         grp_out = QGroupBox("Fit Output Actions")
         fl_out = QVBoxLayout(grp_out)
-        self.chk_overlay_graph = QCheckBox("Overlay fitted curve onto active graph")
-        self.chk_overlay_graph.setChecked(True)
+        self.chk_overlay_graph = QCheckBox("Add the fitted curve to this chart")
+        self.chk_overlay_graph.setChecked(self.active_graph is not None)
+        self.chk_overlay_graph.setEnabled(self.active_graph is not None)
+        self.chk_overlay_graph.setToolTip("Adding a curve also creates a worksheet with fitted values.")
         fl_out.addWidget(self.chk_overlay_graph)
 
         self.chk_conf_band = QCheckBox("Draw 95% Confidence Band shading")
@@ -147,9 +160,12 @@ class FitDialog(QDialog):
         self.chk_create_report.setChecked(True)
         fl_out.addWidget(self.chk_create_report)
 
-        self.chk_export_sheet = QCheckBox("Export fitted data & residuals to new Worksheet tab")
+        self.chk_export_sheet = QCheckBox("Create a worksheet with fitted values and residuals")
         self.chk_export_sheet.setChecked(True)
         fl_out.addWidget(self.chk_export_sheet)
+        self.chk_overlay_graph.toggled.connect(self._sync_fit_outputs)
+        self.chk_export_sheet.toggled.connect(self._sync_fit_outputs)
+        self._sync_fit_outputs()
 
         content_layout.addWidget(grp_out)
 
@@ -160,6 +176,10 @@ class FitDialog(QDialog):
         self.txt_preview.setMaximumHeight(190)
         self.txt_preview.setHtml("<i>Click 'Preview fit' to evaluate and preview results.</i>")
         content_layout.addWidget(self.txt_preview)
+        if self.combo_sheet.count() > 1:
+            batch = QPushButton("Fit across worksheets…")
+            batch.clicked.connect(self._fit_across_worksheets)
+            content_layout.addWidget(batch)
 
         scroll.setWidget(content_widget)
         layout.addWidget(scroll, stretch=1)
@@ -205,10 +225,17 @@ class FitDialog(QDialog):
         self.spn_roi_max.valueChanged.connect(self._clear_fit_preview)
         from omnigraph.ui.dialogs.dialog_layout import fold_section, finish_dialog
         self.output_toggle, self.output_options = fold_section(grp_out, "Change fit outputs")
-        summary = QLabel("Preview the fit, then add it to your project. The default adds the fitted curve, a report, and a results worksheet.")
+        summary = QLabel("Choose data and a model. Preview the fit to check the results before adding it.")
         summary.setWordWrap(True)
         layout.insertWidget(0, summary)
         finish_dialog(self, scroll_body=False)
+
+    def _sync_fit_outputs(self):
+        if self.sender() is self.chk_overlay_graph and self.chk_overlay_graph.isChecked():
+            self.chk_export_sheet.setChecked(True)
+        if not self.chk_export_sheet.isChecked():
+            self.chk_overlay_graph.setChecked(False)
+        self.chk_conf_band.setEnabled(self.chk_overlay_graph.isChecked())
 
     def _clear_fit_preview(self):
         self.last_fit_result = None
@@ -274,29 +301,8 @@ class FitDialog(QDialog):
             QMessageBox.warning(self, "Data Error", "Selected columns do not have enough valid numeric data points.")
             return None
 
-        # ROI filter
-        if self.chk_use_roi.isChecked():
-            xmin = min(self.spn_roi_min.value(), self.spn_roi_max.value())
-            xmax = max(self.spn_roi_min.value(), self.spn_roi_max.value())
-            mask = (x_arr >= xmin) & (x_arr <= xmax)
-            x_arr = x_arr[mask]
-            y_arr = y_arr[mask]
-            if len(x_arr) < 2:
-                QMessageBox.warning(self, "ROI Error", "No data points found in the selected ROI range.")
-                return None
-
-        model_code = self.combo_model.currentData()
-
         try:
-            if model_code == "linear":
-                res = CurveFitter.linear_fit(x_arr, y_arr, fix_intercept=self.chk_fix_intercept.isChecked())
-            elif model_code == "poly2":
-                res = CurveFitter.polynomial_fit(x_arr, y_arr, degree=2)
-            elif model_code == "poly3":
-                res = CurveFitter.polynomial_fit(x_arr, y_arr, degree=3)
-            else:
-                res = CurveFitter.nonlinear_fit(x_arr, y_arr, model_type=model_code)
-
+            res = self._calculate_fit(x_arr, y_arr)
             self.last_fit_result = res
 
             self.txt_preview.setHtml(res.to_html_report(details=False))
@@ -305,6 +311,45 @@ class FitDialog(QDialog):
         except Exception as e:
             QMessageBox.critical(self, "Fit Calculation Failed", f"Curve fitting failed to converge:\n{e}")
             return None
+
+    def _fit_range(self):
+        return sorted((self.spn_roi_min.value(), self.spn_roi_max.value()))
+
+    def _calculate_fit(self, x, y):
+        if self.chk_use_roi.isChecked():
+            minimum, maximum = self._fit_range()
+            mask = (x >= minimum) & (x <= maximum)
+            x, y = x[mask], y[mask]
+            if len(x) < 2:
+                raise ValueError("Fewer than two data points in the selected X range.")
+        model = self.combo_model.currentData()
+        if model == "linear":
+            return CurveFitter.linear_fit(x, y, fix_intercept=self.chk_fix_intercept.isChecked())
+        if model in {"poly2", "poly3"}:
+            return CurveFitter.polynomial_fit(x, y, degree=int(model[-1]))
+        return CurveFitter.nonlinear_fit(x, y, model_type=model)
+
+    def _fit_across_worksheets(self):
+        from omnigraph.analysis.reporting import result_number
+        from omnigraph.ui.dialogs.batch_analysis import run_batch
+
+        def summarize(result):
+            if not result.success:
+                raise ValueError(result.message or "Fit did not converge.")
+            estimates = ", ".join(f"{name} = {result_number(value)}" for name, value in result.parameters.items())
+            return len(result.x_orig), result_number(result.r_squared), result_number(result.rmse), estimates
+
+        settings = [("Model", self.combo_model.currentText())]
+        if self.chk_use_roi.isChecked():
+            minimum, maximum = self._fit_range()
+            settings.append(("X range", f"{minimum:g} to {maximum:g}"))
+        if self.combo_model.currentData() == "linear":
+            settings.append(("Intercept fixed at zero", "Yes" if self.chk_fix_intercept.isChecked() else "No"))
+        run_batch(
+            self, "Compare curve fits", self.combo_sheet.currentData(),
+            self.combo_x_col.currentData(), self.combo_y_col.currentData(),
+            self._calculate_fit, summarize, ("Points", "R²", "RMSE", "Fitted parameters"), settings, 2,
+        )
 
     def _on_accept(self):
         res = self.last_fit_result or self._run_fit_calculation()

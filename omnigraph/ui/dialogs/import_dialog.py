@@ -13,12 +13,13 @@ from PyQt6.QtWidgets import (
     QCheckBox, QLineEdit, QTextEdit, QTabWidget, QPushButton, QTableWidget,
     QTableWidgetItem, QFileDialog, QMessageBox, QLabel,
     QListWidget, QListWidgetItem, QGroupBox, QWidget,
-    QApplication, QToolButton, QMenu
+    QApplication, QToolButton, QMenu, QInputDialog
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QSignalBlocker
 
 from omnigraph.ai.data_extractor import SmartDataExtractor
 from omnigraph.core.worksheet import ColumnRole
+from omnigraph.ui.saved_settings import load_settings, store_settings
 
 
 class ImportDialog(QDialog):
@@ -55,6 +56,7 @@ class ImportDialog(QDialog):
         self.plot_by_default = plot_by_default or active_graph_title is not None
         self.add_to_active_graph = False
         self.series_choice = "first"
+        self._preview_cache = (None, None)
 
         self.setWindowTitle("Import data")
         self.resize(840, 600)
@@ -170,11 +172,22 @@ class ImportDialog(QDialog):
 
         # Ingestion & Parsing Settings
         grp_settings = QGroupBox("Reading options")
-        gl = QHBoxLayout(grp_settings)
-        gl.setSpacing(10)
+        gl = QGridLayout(grp_settings)
+        gl.setSpacing(8)
+        self.profiles = load_settings("import/reading_profiles")
+        self.combo_profile = QComboBox()
+        self.combo_profile.setMinimumContentsLength(10)
+        self.combo_profile.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self._list_profiles()
+        self.combo_profile.activated.connect(self._apply_profile)
+        gl.addWidget(QLabel("Reading preset"), 0, 0)
+        gl.addWidget(self.combo_profile, 0, 1)
+        save_profile = QPushButton("Save preset…")
+        save_profile.clicked.connect(self._save_profile)
+        gl.addWidget(save_profile, 0, 2)
 
         # Delimiter
-        gl.addWidget(QLabel("Separate columns by:"))
+        gl.addWidget(QLabel("Separate columns by"), 1, 0)
         self.combo_delim = QComboBox()
         self.combo_delim.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.combo_delim.setMinimumContentsLength(8)
@@ -184,12 +197,10 @@ class ImportDialog(QDialog):
         self.combo_delim.addItem("Semicolon (;)", ";")
         self.combo_delim.addItem("Whitespace", "whitespace")
         self.combo_delim.currentIndexChanged.connect(self._refresh_current_preview)
-        gl.addWidget(self.combo_delim)
-
-        gl.addSpacing(10)
+        gl.addWidget(self.combo_delim, 1, 1, 1, 2)
 
         # Header Mode
-        gl.addWidget(QLabel("Column names:"))
+        gl.addWidget(QLabel("Column names"), 2, 0)
         self.combo_header = QComboBox()
         self.combo_header.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.combo_header.setMinimumContentsLength(10)
@@ -198,9 +209,10 @@ class ImportDialog(QDialog):
         self.combo_header.addItem("First 2 Rows are Names & Units", "two_rows")
         self.combo_header.addItem("No Header (Pure Data)", "none")
         self.combo_header.currentIndexChanged.connect(self._refresh_current_preview)
-        gl.addWidget(self.combo_header)
-
-        gl.addStretch()
+        gl.addWidget(self.combo_header, 2, 1, 1, 2)
+        gl.setColumnStretch(1, 1)
+        self.combo_header.currentIndexChanged.connect(self._show_custom_reading)
+        self.combo_delim.currentIndexChanged.connect(self._show_custom_reading)
         main_layout.addWidget(grp_settings)
 
         # Multi-File Destination & Auto-Plot Group (responsive 2-row layout)
@@ -396,7 +408,6 @@ class ImportDialog(QDialog):
         text = clipboard.text()
         if text:
             self.txt_paste.setPlainText(text)
-            self._load_text_preview()
 
     def _load_sample_xrd(self):
         sample_xrd = (
@@ -495,6 +506,18 @@ class ImportDialog(QDialog):
         self.tabs_source.setCurrentIndex(1)
         self.txt_paste.setPlainText(sample_spec)
 
+    def configure_chart_drop(self, layout):
+        from omnigraph.ui.chart_layout_picker import CHART_LAYOUTS
+
+        title = next(title for choice, title, _ in CHART_LAYOUTS if choice == layout)
+        self.setWindowTitle(f"Import data · {title}")
+        self.chk_auto_plot.setChecked(True)
+        self.chk_auto_plot.hide()
+        self.graph_destination.hide()
+        self.series_combo.setCurrentIndex(self.series_combo.findData("all"))
+        if layout == "waterfall":
+            self.combo_plot_type.setCurrentText("line")
+
     def _update_plot_series(self, result=None):
         previous = self.series_combo.currentData()
         self.series_combo.clear()
@@ -567,6 +590,59 @@ class ImportDialog(QDialog):
         self._update_plot_series()
         self.btn_ok.setEnabled(False)
 
+    def _list_profiles(self, selected=None):
+        self.combo_profile.clear()
+        self.combo_profile.addItem("Automatic", None)
+        self.combo_profile.addItem("Custom options", "")
+        for name in sorted(self.profiles, key=str.casefold):
+            self.combo_profile.addItem(name, name)
+        self.combo_profile.setCurrentIndex(max(0, self.combo_profile.findData(selected)))
+
+    def _show_custom_reading(self):
+        automatic = self.combo_header.currentData() == self.combo_delim.currentData() == "auto"
+        self.combo_profile.setCurrentIndex(0 if automatic else 1)
+
+    def _apply_profile(self):
+        profile = self.combo_profile.currentData()
+        if profile == "":
+            return
+        values = self.profiles.get(profile, ["auto", "auto"])
+        if not isinstance(values, list) or len(values) != 2:
+            return
+        for combo, value in zip((self.combo_header, self.combo_delim), values):
+            with QSignalBlocker(combo):
+                combo.setCurrentIndex(max(0, combo.findData(value)))
+        self._refresh_current_preview()
+
+    def _save_profile(self):
+        name, ok = QInputDialog.getText(self, "Save reading preset", "Preset name")
+        name = name.strip()
+        if not ok or not name:
+            return
+        if name in self.profiles and QMessageBox.question(
+            self, "Replace reading preset?", f"Replace “{name}” with these settings?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No,
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        self.profiles[name] = [self.combo_header.currentData(), self.combo_delim.currentData()]
+        store_settings("import/reading_profiles", self.profiles)
+        self._list_profiles(name)
+
+    def _extract(self, source, *, pasted=False, remember=True):
+        options = self._reading_options()
+        stat = None if pasted else os.stat(source)
+        identity = (source, pasted, options, None if pasted else (stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns))
+        saved_identity, saved_result = self._preview_cache
+        if saved_identity == identity:
+            return saved_result
+        if pasted:
+            result = SmartDataExtractor.extract_from_text(source, source_name="Pasted_Data", **options)
+        else:
+            result = SmartDataExtractor.extract_from_file(source, **options)
+        if remember:
+            self._preview_cache = (identity, result)
+        return result
+
     def _reading_options(self):
         delimiter = self.combo_delim.currentData()
         return {
@@ -582,7 +658,7 @@ class ImportDialog(QDialog):
             self._clear_preview("Paste data to see a preview.")
             return
         try:
-            result = SmartDataExtractor.extract_from_text(raw_text, source_name="Pasted_Data", **self._reading_options())
+            result = self._extract(raw_text, pasted=True)
             self._render_preview(result, "Pasted text")
         except Exception as error:
             self._clear_preview(f"Could not read pasted data: {error}")
@@ -595,7 +671,7 @@ class ImportDialog(QDialog):
             self._clear_preview("Choose a file to see a preview.")
             return
         try:
-            result = SmartDataExtractor.extract_from_file(self.filepath, **self._reading_options())
+            result = self._extract(self.filepath)
             self._render_preview(result, os.path.basename(self.filepath))
         except Exception as error:
             self._clear_preview(f"Could not read the selected file: {error}")
@@ -603,7 +679,6 @@ class ImportDialog(QDialog):
 
     def _on_accept(self):
         """Processes either pasted raw text or selected files for import."""
-        reading_options = self._reading_options()
         self.imported_results.clear()
 
         # Check if user is importing from Pasted Text tab
@@ -613,11 +688,7 @@ class ImportDialog(QDialog):
                 QMessageBox.warning(self, "No Text", "Please paste data text or choose sample data.")
                 return
             try:
-                res = SmartDataExtractor.extract_from_text(
-                    raw_text,
-                    source_name="Pasted_Data",
-                    **reading_options,
-                )
+                res = self._extract(raw_text, pasted=True)
                 if res.dataframe.empty:
                     QMessageBox.warning(self, "No Data", "No numeric columns could be extracted from the text.")
                     return
@@ -647,10 +718,7 @@ class ImportDialog(QDialog):
                     errors.append(f"File not found: {p}")
                     continue
                 try:
-                    res = SmartDataExtractor.extract_from_file(
-                        p,
-                        **reading_options,
-                    )
+                    res = self._extract(p, remember=False)
                     if res.dataframe.empty:
                         errors.append(f"No numeric data extracted from {os.path.basename(p)}")
                         continue

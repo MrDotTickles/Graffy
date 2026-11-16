@@ -22,7 +22,7 @@ class SmoothDialog(QDialog):
         super().__init__(parent)
         self.worksheet = worksheet
         self.selected_col_idx = selected_col_idx
-        self.setWindowTitle("Signal Processing & Smoothing")
+        self.setWindowTitle("Process a signal")
         self.resize(480, 420)
         self.setMinimumSize(380, 300)
         self._init_ui()
@@ -36,7 +36,7 @@ class SmoothDialog(QDialog):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         content_widget = QWidget()
-        form = QFormLayout(content_widget)
+        self.form = form = QFormLayout(content_widget)
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
 
@@ -47,7 +47,7 @@ class SmoothDialog(QDialog):
         for i, c in enumerate(self.worksheet.columns):
             self.combo_col.addItem(f"Col {c.name}: {c.display_label}", i)
         self.combo_col.setCurrentIndex(max(0, min(self.selected_col_idx, self.worksheet.column_count() - 1)))
-        form.addRow("Target Data Column:", self.combo_col)
+        form.addRow("Input column", self.combo_col)
 
         # Method
         self.combo_method = QComboBox()
@@ -61,7 +61,11 @@ class SmoothDialog(QDialog):
         self.combo_method.addItem("Cumulative Integral (∫ y dx)", "integral")
         self.combo_method.addItem("FFT Power Spectrum", "fft")
         self.combo_method.currentIndexChanged.connect(self._on_method_changed)
-        form.addRow("Transformation:", self.combo_method)
+        form.addRow("Method", self.combo_method)
+        self.method_hint = QLabel()
+        self.method_hint.setProperty("role", "muted")
+        self.method_hint.setWordWrap(True)
+        form.addRow(self.method_hint)
 
         # Parameters
         self.spn_window = QSpinBox()
@@ -81,14 +85,14 @@ class SmoothDialog(QDialog):
         form.addRow("Gaussian Sigma:", self.spn_sigma)
 
         # Destination
-        self.radio_new_col = QRadioButton("Add as New Column")
+        self.radio_new_col = QRadioButton("Add a new column")
         self.radio_new_col.setChecked(True)
-        self.radio_replace = QRadioButton("Replace Existing Column Data")
+        self.radio_replace = QRadioButton("Replace values in the input column")
         self.btn_grp = QButtonGroup(self)
         self.btn_grp.addButton(self.radio_new_col)
         self.btn_grp.addButton(self.radio_replace)
 
-        form.addRow("Output Target:", self.radio_new_col)
+        form.addRow("Save result to", self.radio_new_col)
         form.addRow("", self.radio_replace)
 
         scroll.setWidget(content_widget)
@@ -107,9 +111,21 @@ class SmoothDialog(QDialog):
 
     def _on_method_changed(self):
         method = self.combo_method.currentData()
-        self.spn_window.setEnabled(method in ("savgol", "moving_avg"))
-        self.spn_poly.setEnabled(method == "savgol")
-        self.spn_sigma.setEnabled(method == "gaussian")
+        self.form.setRowVisible(self.spn_window, method in {"savgol", "moving_avg"})
+        self.form.setRowVisible(self.spn_poly, method == "savgol")
+        self.form.setRowVisible(self.spn_sigma, method == "gaussian")
+        self.form.setRowVisible(self.radio_new_col, method != "fft")
+        self.form.setRowVisible(self.radio_replace, method != "fft")
+        hints = {
+            "savgol": "Smooth noise while retaining peak shape. The window is measured in data points.",
+            "moving_avg": "Average neighboring data points. A wider window smooths more.",
+            "gaussian": "Smooth with more weight on nearby points. A larger sigma smooths more.",
+            "d1": "Calculate the rate of change of Y with respect to X.",
+            "d2": "Calculate how the rate of change varies with X.",
+            "integral": "Calculate the running area under Y as X changes.",
+            "fft": "Add two columns for the frequency and power spectrum.",
+        }
+        self.method_hint.setText(hints.get(method, ""))
 
     def _on_accept(self):
         col_idx = self.combo_col.currentData()

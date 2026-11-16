@@ -20,6 +20,7 @@ PATHS = {
     "panel": '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/>',
     "edit": '<path d="m14 4 6 6M4 20l5-1L21 7l-4-4L5 15l-1 5Z"/>',
     "copy": '<rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V3H3v13h5"/>',
+    "bounds": '<path d="M4 5v14h15M8 9h9v6M8 7v4m7 4h4"/>',
     "zoom": '<circle cx="10" cy="10" r="7"/><path d="m15 15 6 6M7 10h6m-3-3v6"/>',
     "folder": '<path d="M3 6h7l2 3h9v11H3V6Z"/>',
     "help": '<circle cx="12" cy="12" r="9"/><path d="M9 9a3 3 0 1 1 4 3c-1 1-1 1-1 3m0 3h.01"/>',

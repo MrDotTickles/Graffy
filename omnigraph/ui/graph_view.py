@@ -11,10 +11,11 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import pyqtSignal, Qt, QPoint, QRect
 from PyQt6.QtGui import QAction, QKeySequence, QShortcut
 
-from omnigraph.core.project import GraphModel, Project
+from omnigraph.core.project import CurveModel, GraphModel, Project
+from omnigraph.core.chart_drop import worksheet_curves
 from omnigraph.graphing.canvas import OmniCanvas
 from omnigraph.graphing.themes import THEMES
-from omnigraph.core.plot_editing import PLOT_GROUPS, change_graph_plot_type
+from omnigraph.core.plot_editing import PLOT_CHOICES, PLOT_GROUPS, axis_family, change_graph_plot_type
 from omnigraph.ui.styles.design import icon
 from omnigraph.analysis.statistics import StatisticsAnalyzer
 
@@ -27,6 +28,7 @@ class GraphViewWidget(QWidget):
     range_selected = pyqtSignal(float, float)  # xmin, xmax
     labels_changed = pyqtSignal()
     curves_changed = pyqtSignal()
+    request_save_chart_setup = pyqtSignal()
     request_jump_to_sheet = pyqtSignal(str, str)  # (sheet_name, workbook_name)
     request_replace_data = pyqtSignal(bool)  # duplicate first
 
@@ -221,7 +223,8 @@ class GraphViewWidget(QWidget):
         self.canvas_widget.range_selected.connect(self.range_selected)
         self.canvas_widget.labels_changed.connect(self.labels_changed)
         self.canvas_widget.labels_changed.connect(self._sync_quick_labels)
-        self.canvas_widget.files_dropped.connect(self._on_files_dropped)
+        self.canvas_widget.files_dropped.connect(self._on_files_dropped, Qt.ConnectionType.QueuedConnection)
+        self.canvas_widget.worksheet_dropped.connect(self._on_worksheet_dropped, Qt.ConnectionType.QueuedConnection)
         self.canvas_widget.point_mask_toggled.connect(self._on_point_mask_toggled)
         self.canvas_widget.request_significance_bracket.connect(self._prompt_significance_bracket)
         layout.addWidget(self.canvas_widget)
@@ -258,7 +261,10 @@ class GraphViewWidget(QWidget):
         self.edit_chart_button.setCheckable(True)
         self.edit_chart_button.setToolTip("Edit labels, style, legend, and annotations")
         self.edit_chart_button.toggled.connect(self._set_chart_settings_open)
-        self.chart_toolbar.addWidget(self.edit_chart_button)
+        bounds_action = self.chart_toolbar.addAction(
+            icon("bounds"), "Axis bounds", lambda: self.canvas_widget.edit_axis_bounds()
+        )
+        bounds_action.setToolTip("Set numeric axis minima and maxima, or use automatic bounds")
         self.change_plot_button=QToolButton()
         self.change_plot_button.setText("Change plot")
         self.change_plot_button.setIcon(icon("chart"))
@@ -280,9 +286,6 @@ class GraphViewWidget(QWidget):
         plot_menu.addAction("Change just one series…",self._edit_one_series)
         plot_menu.aboutToShow.connect(self._sync_plot_type_actions)
         self.change_plot_button.setMenu(plot_menu)
-        self.chart_toolbar.addWidget(self.change_plot_button)
-        self.legend_action = self.chart_toolbar.addAction(icon("legend"), "Legend…", self._open_legend_editor)
-        self.legend_action.setToolTip("Change series colors, names and legend appearance")
         data_button = QToolButton()
         data_button.setText("Data")
         data_button.setIcon(icon("sheet"))
@@ -292,12 +295,24 @@ class GraphViewWidget(QWidget):
         data_menu = QMenu(data_button)
         self.view_data_action = data_menu.addAction("View source worksheet", self._view_chart_data)
         all_sources = data_menu.addMenu("Source worksheets")
-        data_menu.addAction("Add series…", self._open_add_layer_dialog)
+        add_worksheet = data_menu.addMenu("Add worksheet")
+        add_worksheet.setToolTipsVisible(True)
+        data_menu.addAction("Choose columns…", self._open_add_layer_dialog)
+        save_setup = data_menu.addAction("Save as chart setup…", self.request_save_chart_setup.emit)
         data_menu.addSeparator()
         replace_action = data_menu.addAction("Replace data…", lambda: self.request_replace_data.emit(False))
         duplicate_action = data_menu.addAction("Duplicate with new data…", lambda: self.request_replace_data.emit(True))
 
         def update_data_menu():
+            add_worksheet.clear()
+            for workbook in self.project.workbooks:
+                for sheet in workbook.sheets:
+                    action = add_worksheet.addAction(f"{workbook.name} / {sheet.name}".replace("&", "&&"))
+                    action.setEnabled(sheet.column_count() >= 2)
+                    action.triggered.connect(
+                        lambda checked=False, w=workbook.name, s=sheet.name: self.add_worksheet_series(w, s)
+                    )
+            add_worksheet.setEnabled(bool(add_worksheet.actions()))
             measured = any(not curve.is_fit_curve for curve in self.graph_model.curves)
             sources = list(dict.fromkeys(
                 (c.source_sheet, c.source_workbook) for c in self.graph_model.curves if c.source_sheet
@@ -312,6 +327,7 @@ class GraphViewWidget(QWidget):
                         f"{workbook} / {sheet}",
                         lambda checked=False, s=sheet, w=workbook: self.request_jump_to_sheet.emit(s, w),
                     )
+            save_setup.setEnabled(measured)
             replace_action.setEnabled(measured)
             duplicate_action.setEnabled(measured)
 
@@ -319,6 +335,10 @@ class GraphViewWidget(QWidget):
         data_menu.aboutToShow.connect(update_data_menu)
         data_button.setMenu(data_menu)
         self.chart_toolbar.addWidget(data_button)
+        self.chart_toolbar.addWidget(self.edit_chart_button)
+        self.chart_toolbar.addWidget(self.change_plot_button)
+        self.legend_action = self.chart_toolbar.addAction(icon("legend"), "Legend…", self._open_legend_editor)
+        self.legend_action.setToolTip("Change series colors, names and legend appearance")
         navigation = QToolButton()
         navigation.setText("Explore")
         navigation.setIcon(icon("zoom"))
@@ -340,8 +360,9 @@ class GraphViewWidget(QWidget):
         self.chart_toolbar.addWidget(spacer)
         copy_action = self.chart_toolbar.addAction(icon("copy"), "Copy graph", self._copy_to_clipboard)
         self._chart_toolbar_buttons = (
-            self.edit_chart_button, self.change_plot_button, data_button, navigation,
-            self.chart_toolbar.widgetForAction(self.legend_action), self.chart_toolbar.widgetForAction(copy_action),
+            self.chart_toolbar.widgetForAction(bounds_action), data_button, self.edit_chart_button,
+            self.change_plot_button, self.chart_toolbar.widgetForAction(self.legend_action),
+            navigation, self.chart_toolbar.widgetForAction(copy_action),
         )
         self.chart_toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         layout.addWidget(self.chart_toolbar)
@@ -468,10 +489,22 @@ class GraphViewWidget(QWidget):
     def _adapt_chart_toolbar(self):
         if not hasattr(self, "_chart_toolbar_buttons"):
             return
-        style = (Qt.ToolButtonStyle.ToolButtonIconOnly if self.width() / self._interface_scale < 700
-                 else Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        icons_only = Qt.ToolButtonStyle.ToolButtonIconOnly
+        labeled = Qt.ToolButtonStyle.ToolButtonTextBesideIcon
         for button in self._chart_toolbar_buttons:
-            button.setToolButtonStyle(style)
+            button.setToolButtonStyle(icons_only)
+        self.chart_toolbar.layout().invalidate()
+        remaining = self.width() - self.chart_toolbar.sizeHint().width()
+        for button in self._chart_toolbar_buttons:
+            if remaining <= 0:
+                break
+            icon_width = button.sizeHint().width()
+            button.setToolButtonStyle(labeled)
+            extra = button.sizeHint().width() - icon_width
+            if extra <= remaining:
+                remaining -= extra
+            else:
+                button.setToolButtonStyle(icons_only)
 
     def resizeEvent(self,event):
         super().resizeEvent(event)
@@ -695,8 +728,15 @@ class GraphViewWidget(QWidget):
         self.refresh_plot()
         self.labels_changed.emit()
 
+    plot_needs_refresh = False
+
+    def refresh_pending_plot(self):
+        if self.plot_needs_refresh:
+            self.refresh_plot()
+
     def refresh_plot(self):
         """Forces re-render of canvas."""
+        self.plot_needs_refresh = False
         self.canvas_widget.refresh()
         self._sync_plot_type_actions()
         self._update_source_bar()
@@ -882,11 +922,47 @@ class GraphViewWidget(QWidget):
         self.refresh_plot()
         self.labels_changed.emit()
 
-    def _on_files_dropped(self, paths: list):
-        """Open the standard import preview for files dropped onto a chart."""
+    def add_worksheet_series(self, workbook, sheet_name):
+        """Link the worksheet's usable X/Y pairs to this chart."""
+        sheet = self.project.get_worksheet(workbook, sheet_name)
+        if sheet is None:
+            return
+        graph = self.graph_model
+        measured = [curve for curve in graph.curves if not curve.is_fit_curve]
+        plot_type = graph.plot_type
+        if plot_type not in {value for _, value in PLOT_CHOICES}:
+            plot_type = measured[0].plot_type if measured else "line_symbol"
+        added, duplicate = worksheet_curves(sheet, workbook, graph, plot_type)
+        if added:
+            if not graph.curves and axis_family(plot_type) == "xy":
+                first = added[0]
+                if graph.x_title in {"", "X Axis"}:
+                    graph.x_title = sheet.columns[first.x_col_idx].display_label
+                if graph.y_title in {"", "Y Axis"}:
+                    graph.y_title = sheet.columns[first.y_col_idx].display_label
+            for curve in added:
+                graph.add_curve(curve)
+            self.refresh_plot()
+            self.curves_changed.emit()
+            count = len(added)
+            message = f"Added {count} series from {sheet_name}."
+        elif duplicate:
+            message = f"{sheet_name} is already plotted on this chart."
+        else:
+            message = f"{sheet_name} needs numeric data in separate X and Y columns."
         window = self.window()
-        if hasattr(window, "_show_import_dialog"):
-            window._show_import_dialog(initial_filepaths=paths, target_graph=self.graph_model)
+        if hasattr(window, "statusBar"):
+            window.statusBar().showMessage(message, 5000)
+
+    def _on_worksheet_dropped(self, workbook, sheet, layout=""):
+        window = self.window()
+        if hasattr(window, "_add_worksheet_to_chart"):
+            window._add_worksheet_to_chart(workbook, sheet, self.graph_model.id, layout)
+
+    def _on_files_dropped(self, paths: list, layout=""):
+        window = self.window()
+        if hasattr(window, "_drop_files_onto_chart"):
+            window._drop_files_onto_chart(paths, self.graph_model, layout)
 
     def _on_point_mask_toggled(self, curve_label: str, row_idx: int):
         """Toggle mask/exclusion for a point in the dataset."""

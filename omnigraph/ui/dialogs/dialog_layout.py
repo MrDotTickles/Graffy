@@ -1,6 +1,8 @@
 """Shared, accessible progressive disclosure for task dialogs."""
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QApplication, QScrollArea, QVBoxLayout, QWidget, QToolButton, QLayout
+from PyQt6.QtCore import QEvent, QObject, Qt
+from PyQt6.QtWidgets import (
+    QApplication, QBoxLayout, QDialogButtonBox, QLayout, QScrollArea, QToolButton, QVBoxLayout, QWidget,
+)
 
 
 def fold_section(group, title):
@@ -28,6 +30,47 @@ def fold_section(group, title):
         button.setArrowType(Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow)
     button.toggled.connect(toggle)
     return button, content
+
+
+class _ResponsiveFooter(QObject):
+    def __init__(self, dialog, footer):
+        super().__init__(dialog)
+        self.footer = footer
+        dialog.installEventFilter(self)
+
+    def eventFilter(self, dialog, event):
+        if event.type() in {QEvent.Type.Show, QEvent.Type.Resize, QEvent.Type.LayoutRequest}:
+            margins = dialog.layout().contentsMargins()
+            available = dialog.width() - margins.left() - margins.right()
+            footer = self.footer
+            self._adapt_button_box(footer, available)
+            if isinstance(footer, QBoxLayout):
+                widths = []
+                for index in range(footer.count()):
+                    item = footer.itemAt(index)
+                    if item.isEmpty():
+                        continue
+                    widget = item.widget()
+                    if isinstance(widget, QDialogButtonBox):
+                        self._adapt_button_box(widget, available)
+                    widths.append(item.minimumSize().width())
+                required = sum(widths) + max(0, len(widths) - 1) * max(0, footer.spacing())
+                direction = (QBoxLayout.Direction.TopToBottom if required > available
+                             else QBoxLayout.Direction.LeftToRight)
+                if footer.direction() != direction:
+                    footer.setDirection(direction)
+        return super().eventFilter(dialog, event)
+
+    @staticmethod
+    def _adapt_button_box(widget, available):
+        if not isinstance(widget, QDialogButtonBox):
+            return
+        buttons = [button for button in widget.buttons() if not button.isHidden()]
+        width = sum(max(button.minimumWidth(), button.minimumSizeHint().width()) for button in buttons)
+        width += max(0, len(buttons) - 1) * max(0, widget.layout().spacing())
+        orientation = Qt.Orientation.Vertical if width > available else Qt.Orientation.Horizontal
+        if widget.orientation() != orientation:
+            widget.setOrientation(orientation)
 
 
 def finish_dialog(dialog, scroll_body=True):
@@ -65,3 +108,8 @@ def finish_dialog(dialog, scroll_body=True):
         height = min(dialog.height(), max(240, available.height() - 48))
         dialog.setMinimumSize(min(480, width), min(320, height))
         dialog.resize(width, height)
+    footer = root.itemAt(root.count() - 1) if root.count() else None
+    if footer:
+        control = footer.widget() or footer.layout()
+        if isinstance(control, (QDialogButtonBox, QBoxLayout)):
+            dialog._responsive_footer = _ResponsiveFooter(dialog, control)

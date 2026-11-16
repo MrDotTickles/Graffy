@@ -114,6 +114,7 @@ class PlotManager:
         layout_mode = getattr(self.model, "layout_mode", "single")
         is_stacked = layout_mode in ("stacked_2x1", "grid_2x1")
         is_grid_1x2 = layout_mode == "grid_1x2"
+        comparison = is_grid_1x2 and self.model.comparison_panels
         is_grid_2x2 = layout_mode in ("grid_2x2", "figure_1")
         has_secondary = (layout_mode in ("single","twin_x")) and any(c.axis == "secondary" for c in self.model.curves if getattr(c, "visible", True))
 
@@ -164,7 +165,7 @@ class PlotManager:
                 ax_d.set_ylabel(self.model.y_title, color=lbl_color, fontweight="bold" if "Classic" in self.model.theme else "normal")
 
         elif is_grid_1x2:
-            sync = getattr(self.model, "sync_axes", True)
+            sync = self.model.sync_axes and not comparison
             self.ax = self.fig.add_subplot(121)
             ax_right = self.fig.add_subplot(122, sharey=self.ax if sync else None)
             self.axes = [self.ax, ax_right]
@@ -188,10 +189,12 @@ class PlotManager:
             self.ax2 = None
             self.ax_bottom = None
             self.ax.set_xlabel(self.model.x_title, color=lbl_color, fontweight="bold" if "Classic" in self.model.theme else "normal")
-            ax_right.set_xlabel(self.model.x_title, color=lbl_color, fontweight="bold" if "Classic" in self.model.theme else "normal")
+            ax_right.set_xlabel(self.model.right_panel_x_title if comparison else self.model.x_title,
+                                color=lbl_color, fontweight="bold" if "Classic" in self.model.theme else "normal")
             self.ax.set_ylabel(self.model.y_title, color=lbl_color, fontweight="bold" if "Classic" in self.model.theme else "normal")
             if not sync:
-                ax_right.set_ylabel(self.model.y_title, color=lbl_color, fontweight="bold" if "Classic" in self.model.theme else "normal")
+                ax_right.set_ylabel(self.model.right_panel_y_title if comparison else self.model.y_title,
+                                    color=lbl_color, fontweight="bold" if "Classic" in self.model.theme else "normal")
 
         elif is_stacked:
             self.ax = self.fig.add_subplot(211)
@@ -383,29 +386,19 @@ class PlotManager:
                 zorder=100,
             )
 
-        # Scales
-        if self.model.x_scale == "log10":
-            self.ax.set_xscale("log", base=10)
-        elif self.model.x_scale == "ln":
-            self.ax.set_xscale("log", base=np.e)
-
-        if self.model.y_scale == "log10":
-            self.ax.set_yscale("log", base=10)
-        elif self.model.y_scale == "ln":
-            self.ax.set_yscale("log", base=np.e)
-
-        if self.ax2 and self.model.y2_scale == "log10":
-            self.ax2.set_yscale("log", base=10)
-
-        # Limits
-        if not self.model.x_auto_limits and self.model.x_min is not None and self.model.x_max is not None:
-            self.ax.set_xlim(self.model.x_min, self.model.x_max)
-
-        if not self.model.y_auto_limits and self.model.y_min is not None and self.model.y_max is not None:
-            self.ax.set_ylim(self.model.y_min, self.model.y_max)
-
-        if self.ax2 and not self.model.y2_auto_limits and self.model.y2_min is not None and self.model.y2_max is not None:
-            self.ax2.set_ylim(self.model.y2_min, self.model.y2_max)
+        # Apply chart bounds across grid panels. Stacked plots have a separate lower Y axis.
+        for panel in self.axes:
+            if comparison and panel is self.axes[1]:
+                self._apply_axis_settings(panel, "x", "right_panel_x")
+                self._apply_axis_settings(panel, "y", "right_panel_y")
+                continue
+            self._apply_axis_settings(panel, "x", "x")
+            if is_stacked and panel is self.ax_bottom:
+                self._apply_axis_settings(panel, "y", "y_bottom")
+            else:
+                self._apply_axis_settings(panel, "y", "y")
+        if self.ax2 is not None:
+            self._apply_axis_settings(self.ax2, "y", "y2")
 
         # Grid lines
         if self.model.show_grid_major:
@@ -436,10 +429,10 @@ class PlotManager:
                 h2, l2 = self.ax2.get_legend_handles_labels()
                 handles.extend(h2)
                 labels.extend(l2)
-            if is_stacked and self.ax_bottom:
-                hb, lb = self.ax_bottom.get_legend_handles_labels()
-                handles.extend(hb)
-                labels.extend(lb)
+            for panel in self.axes[1:]:
+                panel_handles, panel_labels = panel.get_legend_handles_labels()
+                handles.extend(panel_handles)
+                labels.extend(panel_labels)
 
             if handles:
                 loc_raw = str(self.model.legend_location or "best").strip().lower()
@@ -508,6 +501,25 @@ class PlotManager:
             self.fig.tight_layout(pad=1.2)
         except Exception:
             pass
+
+    def _apply_axis_settings(self, panel, direction, key):
+        axis_scale = getattr(self.model, f"{key}_scale", "linear")
+        if axis_scale in {"log10", "ln"}:
+            setter = panel.set_xscale if direction == "x" else panel.set_yscale
+            setter("log", base=10 if axis_scale == "log10" else np.e)
+        if getattr(self.model, f"{key}_auto_limits"):
+            return
+        try:
+            lower = float(getattr(self.model, f"{key}_min"))
+            upper = float(getattr(self.model, f"{key}_max"))
+        except (TypeError, ValueError, OverflowError):
+            return
+        if not np.isfinite([lower, upper]).all() or lower >= upper:
+            return
+        if axis_scale in {"log10", "ln"} and lower <= 0:
+            return
+        setter = panel.set_xlim if direction == "x" else panel.set_ylim
+        setter(lower, upper)
 
     def _get_curve_data_with_indices(self, curve: CurveModel) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray], np.ndarray]:
         """Extracts numeric arrays and valid worksheet row indices for a curve."""
@@ -624,6 +636,8 @@ class PlotManager:
         height_in: Optional[float] = None,
         tight_crop: bool = True,
         pad_inches: float = 0.15,
+        *,
+        file_format=None,
     ):
         """Exports graph to high-res file (PNG, PDF, SVG, TIFF, EPS, JPG) with optional physical dimensions."""
         orig_size = self.fig.get_size_inches()
@@ -644,7 +658,7 @@ class PlotManager:
                 kwargs["bbox_inches"] = "tight"
                 kwargs["pad_inches"] = pad_inches
 
-            self.fig.savefig(filepath, **kwargs)
+            self.fig.savefig(filepath, format=file_format, **kwargs)
         finally:
             self.fig.set_size_inches(*orig_size, forward=False)
             self.fig.set_dpi(orig_dpi)

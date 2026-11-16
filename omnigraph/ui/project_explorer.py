@@ -14,9 +14,60 @@ from PyQt6.QtWidgets import (
     QToolButton, QMenu, QHeaderView, QLineEdit, QLabel, QPushButton
 )
 from PyQt6.QtCore import pyqtSignal, Qt, QSize
-from PyQt6.QtGui import QColor, QBrush
+from PyQt6.QtGui import QColor, QBrush, QDrag
 from omnigraph.ui.styles.design import icon
 from omnigraph.core.project import Project
+from omnigraph.worksheet_drag import WorksheetDragData
+
+
+class ProjectTree(QTreeWidget):
+    worksheet_dropped = pyqtSignal(str, str, str)  # workbook, worksheet, chart ID
+
+    def __init__(self, explorer):
+        super().__init__(explorer)
+        self.explorer = explorer
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+
+    def startDrag(self, _actions):
+        item = self.currentItem()
+        data = item.data(0, Qt.ItemDataRole.UserRole) if item else None
+        if not data or data[0] != "sheet":
+            return
+        _, sheet, workbook = data
+        drag = QDrag(self)
+        drag.setMimeData(WorksheetDragData(self.explorer.project, workbook, sheet))
+        drag.exec(Qt.DropAction.CopyAction, Qt.DropAction.CopyAction)
+
+    def dragEnterEvent(self, event):
+        mime = event.mimeData()
+        if isinstance(mime, WorksheetDragData) and mime.project is self.explorer.project:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def _drop_target(self, event):
+        mime = event.mimeData()
+        if not isinstance(mime, WorksheetDragData) or mime.project is not self.explorer.project:
+            return None
+        item = self.itemAt(event.position().toPoint())
+        data = item.data(0, Qt.ItemDataRole.UserRole) if item else None
+        return data[2] if data and data[0] == "graph" else None
+
+    def dragMoveEvent(self, event):
+        if self._drop_target(event):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        chart_id = self._drop_target(event)
+        if chart_id:
+            mime = event.mimeData()
+            event.acceptProposedAction()
+            self.worksheet_dropped.emit(mime.workbook, mime.sheet, chart_id)
+        else:
+            event.ignore()
 
 
 class ProjectExplorerWidget(QWidget):
@@ -34,6 +85,7 @@ class ProjectExplorerWidget(QWidget):
 
     # Context action signals
     request_quick_plot = pyqtSignal(str, str, str)  # (sheet_name, parent_id, plot_type)
+    request_chart_from_setup = pyqtSignal(str, str)
     request_duplicate_sheet = pyqtSignal(str, str)  # (sheet_name, parent_id)
     request_duplicate_graph = pyqtSignal(str)       # (graph_title)
     request_export_sheet = pyqtSignal(str, str)     # (sheet_name, parent_id)
@@ -158,7 +210,7 @@ class ProjectExplorerWidget(QWidget):
         layout.addWidget(self.txt_search)
 
         # 3. Flat Category Navigation Tree
-        self.tree = QTreeWidget(self)
+        self.tree = ProjectTree(self)
         self.tree.setHeaderHidden(True)
         self.tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -217,7 +269,10 @@ class ProjectExplorerWidget(QWidget):
                     c_count = ws.column_count()
                     r_count = ws.row_count()
 
-                    plotted_graphs = [g.title for g in self.project.graphs if any(c.source_sheet == ws.name for c in g.curves)]
+                    plotted_graphs = [
+                        g.title for g in self.project.graphs
+                        if any(c.source_workbook == wb.name and c.source_sheet == ws.name for c in g.curves)
+                    ]
                     plot_badge = f" ⇨ 📈 {', '.join(plotted_graphs)}" if plotted_graphs else ""
 
                     ws_item.setText(0, ws.name)
@@ -234,7 +289,7 @@ class ProjectExplorerWidget(QWidget):
                         f"Columns ({c_count}): {cols_str}\n"
                         f"Rows: {r_count}"
                         f"{plotted_str}\n\n"
-                        "💡 Click to open • Right-click for Quick Plot & Options"
+                        "Click to open. Drag onto a chart to choose a layout."
                     )
 
         # 2. GRAPHS (Plots)
@@ -405,6 +460,7 @@ class ProjectExplorerWidget(QWidget):
             plot_menu.addAction("Line + Symbol", lambda: self.request_quick_plot.emit(item_id, parent_id, "line_symbol"))
             plot_menu.addAction("Bar Chart", lambda: self.request_quick_plot.emit(item_id, parent_id, "bar"))
             plot_menu.addAction("Double Y-Axis (Twin Y)", lambda: self.request_quick_plot.emit(item_id, parent_id, "twin_x"))
+            menu.addAction("Chart from saved setup…", lambda: self.request_chart_from_setup.emit(parent_id, item_id))
 
             menu.addSeparator()
             menu.addAction("📋 Duplicate Sheet", lambda: self.request_duplicate_sheet.emit(item_id, parent_id))

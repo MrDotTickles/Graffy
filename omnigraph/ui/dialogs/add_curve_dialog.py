@@ -11,11 +11,12 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox, QMessageBox, QLabel, QGroupBox, QScrollArea,
     QWidget, QFrame, QSizePolicy, QApplication
 )
+from PyQt6.QtCore import QSignalBlocker
 from PyQt6.QtGui import QColor
 
 from omnigraph.ui.dialogs.dialog_layout import fold_section, finish_dialog
 from omnigraph.core.project import Project, GraphModel, CurveModel
-from omnigraph.core.worksheet import ColumnRole
+from omnigraph.core.column_matching import numeric_pairs
 
 
 class AddCurveDialog(QDialog):
@@ -47,33 +48,41 @@ class AddCurveDialog(QDialog):
 
         # 1. Source Worksheet
         grp_src = QGroupBox("Data Source")
-        fl_src = QFormLayout(grp_src)
+        self.source_form = fl_src = QFormLayout(grp_src)
         fl_src.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
 
         self.combo_sheet = QComboBox()
         self.combo_sheet.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.combo_sheet.setMinimumContentsLength(8)
+        self.combo_sheet.setPlaceholderText("Choose a worksheet")
         for wb in self.project.workbooks:
             for s in wb.sheets:
-                self.combo_sheet.addItem(f"{wb.name} - {s.name}", (wb.name, s.name))
+                self.combo_sheet.addItem(f"{wb.name} / {s.name}", (wb.name, s.name))
+        if self.combo_sheet.count():
+            self.combo_sheet.setCurrentIndex(0)
         self.combo_sheet.currentIndexChanged.connect(self._populate_columns)
-        fl_src.addRow("Worksheet:", self.combo_sheet)
+        fl_src.addRow("Worksheet", self.combo_sheet)
+        fl_src.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
 
         self.combo_x_col = QComboBox()
         self.combo_x_col.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.combo_x_col.setMinimumContentsLength(8)
-        fl_src.addRow("X Column:", self.combo_x_col)
+        fl_src.addRow("Horizontal axis (X)", self.combo_x_col)
 
         self.combo_y_col = QComboBox()
         self.combo_y_col.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.combo_y_col.setMinimumContentsLength(8)
         self.combo_y_col.currentIndexChanged.connect(self._on_y_col_changed)
-        fl_src.addRow("Y Column:", self.combo_y_col)
+        fl_src.addRow("Vertical axis (Y)", self.combo_y_col)
 
         self.combo_yerr_col = QComboBox()
         self.combo_yerr_col.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.combo_yerr_col.setMinimumContentsLength(8)
-        fl_src.addRow("Y Error (Optional):", self.combo_yerr_col)
+        fl_src.addRow("Y error bars (optional)", self.combo_yerr_col)
+        self.data_status = QLabel()
+        self.data_status.setWordWrap(True)
+        self.data_status.setProperty("role", "muted")
+        fl_src.addRow(self.data_status)
 
         layout.addWidget(grp_src)
 
@@ -86,11 +95,14 @@ class AddCurveDialog(QDialog):
 
         self.combo_plot_type = QComboBox()
         self.combo_plot_type.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        self.combo_plot_type.addItems([
-            "scatter", "line", "line_symbol", "bar", "step", "spline", "area", "errorbar"
-        ])
-        self.combo_plot_type.setCurrentText("line_symbol")
-        fl_style.addRow("Plot Type:", self.combo_plot_type)
+        for name, code in (
+            ("Scatter", "scatter"), ("Line", "line"), ("Line and symbols", "line_symbol"),
+            ("Vertical bars", "bar"), ("Step", "step"), ("Smooth spline", "spline"),
+            ("Area", "area"), ("Error bars", "errorbar"),
+        ):
+            self.combo_plot_type.addItem(name, code)
+        self.combo_plot_type.setCurrentIndex(self.combo_plot_type.findData("line_symbol"))
+        fl_style.addRow("Chart type", self.combo_plot_type)
 
         grp_advanced = QGroupBox("Appearance")
         fl_advanced = QFormLayout(grp_advanced)
@@ -121,7 +133,7 @@ class AddCurveDialog(QDialog):
         self.combo_line_style.addItems(["- (Solid)", "-- (Dashed)", "-. (Dash-Dot)", ": (Dotted)", "none"])
         fl_advanced.addRow(self.lbl_line_style, self.combo_line_style)
 
-        self.combo_plot_type.currentTextChanged.connect(self._update_symbol_visibility)
+        self.combo_plot_type.currentIndexChanged.connect(self._update_symbol_visibility)
         self._update_symbol_visibility()
 
         layout.addWidget(grp_style)
@@ -140,6 +152,10 @@ class AddCurveDialog(QDialog):
         buttons.rejected.connect(self.reject)
         main_layout.addWidget(buttons)
 
+        self.add_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        self.combo_x_col.currentIndexChanged.connect(self._update_data_status)
+        self.combo_yerr_col.currentIndexChanged.connect(self._update_data_status)
+        self.combo_plot_type.currentIndexChanged.connect(self._update_data_status)
         self._populate_columns()
         finish_dialog(self, scroll_body=False)
         self.btn_color.setAutoDefault(False)
@@ -149,72 +165,73 @@ class AddCurveDialog(QDialog):
 
     def _update_symbol_visibility(self):
         """Conditionally shows/hides features based on whether plot type uses lines or symbols."""
-        plot_type = self.combo_plot_type.currentText()
+        plot_type = self.combo_plot_type.currentData()
         has_symbols = plot_type in ("scatter", "line_symbol", "errorbar")
         has_lines = plot_type in ("line", "line_symbol", "step", "spline", "errorbar", "area")
         self.lbl_marker.setVisible(has_symbols)
         self.combo_marker.setVisible(has_symbols)
         self.lbl_line_style.setVisible(has_lines)
         self.combo_line_style.setVisible(has_lines)
+        self.source_form.setRowVisible(self.combo_yerr_col, self._uses_error_column())
+
+    def _uses_error_column(self):
+        return self.combo_plot_type.currentData() in {"line", "line_symbol", "scatter", "errorbar"}
+
+    def _worksheet(self):
+        key = self.combo_sheet.currentData()
+        return self.project.get_worksheet(*key) if key else None
 
     def _populate_columns(self):
-        self.combo_x_col.clear()
-        self.combo_y_col.clear()
-        self.combo_yerr_col.clear()
-
-        data = self.combo_sheet.currentData()
-        if not data:
-            return
-        wb_name, sheet_name = data
-        wb = self.project.get_workbook(wb_name)
-        if not wb:
-            return
-        sheet = next((s for s in wb.sheets if s.name == sheet_name), None)
-        if not sheet:
-            return
-
-        self.combo_yerr_col.addItem("(None - No Error Bars)", None)
-
-        x_candidate = 0
-        y_candidate = 1 if sheet.column_count() > 1 else 0
-
-        for i, col in enumerate(sheet.columns):
-            label = f"Col {col.name}: {col.display_label}"
-            self.combo_x_col.addItem(label, i)
-            self.combo_y_col.addItem(label, i)
-            self.combo_yerr_col.addItem(label, i)
-            if col.role == ColumnRole.X:
-                x_candidate = i
-            elif col.role == ColumnRole.Y and i > x_candidate:
-                y_candidate = i
-
-        self.combo_x_col.setCurrentIndex(x_candidate)
-        self.combo_y_col.setCurrentIndex(y_candidate)
+        sheet = self._worksheet()
+        with QSignalBlocker(self.combo_x_col), QSignalBlocker(self.combo_y_col), QSignalBlocker(self.combo_yerr_col):
+            self.combo_x_col.clear()
+            self.combo_y_col.clear()
+            self.combo_yerr_col.clear()
+            self.combo_yerr_col.addItem("None", None)
+            if sheet is not None:
+                for index, column in enumerate(sheet.columns):
+                    label = f"{column.display_label} · {column.role.value}"
+                    for combo in (self.combo_x_col, self.combo_y_col, self.combo_yerr_col):
+                        combo.addItem(label, index)
+                pairs = [(x, y) for x, y in sheet.plot_column_pairs() if x != y]
+                if pairs:
+                    key = self.combo_sheet.currentData()
+                    plotted = {(curve.x_col_idx, curve.y_col_idx) for curve in self.active_graph.curves
+                               if (curve.source_workbook, curve.source_sheet) == key}
+                    x, y = next((pair for pair in pairs if pair not in plotted), pairs[0])
+                    self.combo_x_col.setCurrentIndex(self.combo_x_col.findData(x))
+                    self.combo_y_col.setCurrentIndex(self.combo_y_col.findData(y))
         self._on_y_col_changed()
 
     def _on_y_col_changed(self):
-        data = self.combo_sheet.currentData()
-        if not data:
-            return
-        wb_name, sheet_name = data
-        wb = self.project.get_workbook(wb_name)
-        if not wb:
-            return
-        sheet = next((s for s in wb.sheets if s.name == sheet_name), None)
-        if not sheet:
-            return
+        sheet = self._worksheet()
+        y_index = self.combo_y_col.currentData()
+        column = sheet.get_column(y_index) if sheet is not None else None
+        self.txt_label.setText(column.display_label if column else "")
+        error = sheet.find_y_error_column_for(y_index) if column else None
+        with QSignalBlocker(self.combo_yerr_col):
+            self.combo_yerr_col.setCurrentIndex(0 if error is None else self.combo_yerr_col.findData(error))
+        self._update_data_status()
 
-        y_idx = self.combo_y_col.currentData()
-        if y_idx is not None and 0 <= y_idx < len(sheet.columns):
-            col = sheet.columns[y_idx]
-            self.txt_label.setText(col.display_label)
-            # Check adjacent Y error column
-            err_idx = sheet.find_y_error_column_for(y_idx)
-            if err_idx is not None:
-                for ci in range(self.combo_yerr_col.count()):
-                    if self.combo_yerr_col.itemData(ci) == err_idx:
-                        self.combo_yerr_col.setCurrentIndex(ci)
-                        break
+    def _update_data_status(self):
+        sheet = self._worksheet()
+        x, y = self.combo_x_col.currentData(), self.combo_y_col.currentData()
+        error = self.combo_yerr_col.currentData() if self._uses_error_column() else None
+        if sheet is None or x is None or y is None or x == y:
+            self.data_status.setText("Choose two different columns for X and Y.")
+        elif error is not None and error in {x, y}:
+            self.data_status.setText("Choose a separate column for Y error bars.")
+        elif self.combo_plot_type.currentData() == "errorbar" and error is None:
+            self.data_status.setText("Choose the column that contains the Y errors.")
+        else:
+            values, _ = numeric_pairs(sheet, x, y)
+            if len(values):
+                self.data_status.setText(f"{len(values):,} included numeric pairs ready to plot.")
+                self.add_button.setEnabled(True)
+                return True
+            self.data_status.setText("These columns have no included numeric pairs. Choose different columns.")
+        self.add_button.setEnabled(False)
+        return False
 
     def _pick_color(self):
         c = QColorDialog.getColor(QColor("#0284c7"), self, "Select Curve Color")
@@ -228,17 +245,16 @@ class AddCurveDialog(QDialog):
             )
 
     def _on_accept(self):
-        data = self.combo_sheet.currentData()
-        if not data:
+        if not self._update_data_status():
             return
-        wb_name, sheet_name = data
+        wb_name, sheet_name = self.combo_sheet.currentData()
         x_idx = self.combo_x_col.currentData()
         y_idx = self.combo_y_col.currentData()
         if x_idx is None or y_idx is None:
             return
-        yerr_idx = self.combo_yerr_col.currentData()
+        yerr_idx = self.combo_yerr_col.currentData() if self._uses_error_column() else None
         label = self.txt_label.text().strip() or "Layer"
-        pt = self.combo_plot_type.currentText()
+        pt = self.combo_plot_type.currentData()
         axis_mode = self.combo_axis.currentData()
 
         # Marker

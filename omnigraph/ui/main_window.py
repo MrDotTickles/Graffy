@@ -123,6 +123,8 @@ class MainWindow(QMainWindow):
         for text, kind in [("Scatter plot", "scatter"), ("Line plot", "line"),
                            ("Line with symbols", "line_symbol"), ("Bar chart", "bar")]:
             chart_menu.addAction(text, lambda checked=False, k=kind: self.create_plot(k))
+        chart_menu.addSeparator()
+        chart_menu.addAction("Use a saved chart setup…", self.create_chart_from_active_sheet)
         self.chart_workflow_button.setMenu(chart_menu)
         toolbar.addWidget(self.chart_workflow_button)
         self.analyze_workflow_button = QToolButton()
@@ -198,7 +200,7 @@ class MainWindow(QMainWindow):
         self.analyze_workflow_button.setEnabled(has_data or bool(graph and graph.curves))
         self.export_workflow_action.setEnabled(bool(graph and graph.curves))
         if graph:
-            self.status_bar.showMessage("Your chart is ready. Edit chart to adjust appearance. Export graph to save or copy your figure.")
+            self.status_bar.showMessage("Drag a worksheet or data file here, then drop it onto a layout preview.")
         elif isinstance(widget, ReportViewWidget):
             self.status_bar.showMessage("Use Copy report or Save HTML to reference these results.")
         elif has_data:
@@ -472,6 +474,9 @@ class MainWindow(QMainWindow):
         self.dock_explorer.setMinimumWidth(240)
         self.explorer_widget = ProjectExplorerWidget(self.project, self)
         self.explorer_widget.item_activated.connect(self._on_explorer_item_activated)
+        self.explorer_widget.tree.worksheet_dropped.connect(
+            self._add_worksheet_to_chart, Qt.ConnectionType.QueuedConnection,
+        )
         self.explorer_widget.request_new_graph.connect(self.new_graph)
         self.explorer_widget.request_new_sheet.connect(self.new_sheet)
         self.explorer_widget.request_import_into_chart.connect(self.import_into_chart)
@@ -480,6 +485,7 @@ class MainWindow(QMainWindow):
         self.explorer_widget.request_save_project.connect(self.save_project)
         self.explorer_widget.request_rename_project.connect(self.rename_project)
         self.explorer_widget.request_quick_plot.connect(self._on_explorer_quick_plot)
+        self.explorer_widget.request_chart_from_setup.connect(self.create_chart_from_setup)
         self.explorer_widget.request_duplicate_sheet.connect(self._on_explorer_duplicate_sheet)
         self.explorer_widget.request_duplicate_graph.connect(self._on_explorer_duplicate_graph)
         self.explorer_widget.request_export_sheet.connect(self._on_explorer_export_sheet)
@@ -550,6 +556,8 @@ class MainWindow(QMainWindow):
         menu_file.addSeparator()
         self._add_action(menu_file, "Import Data (CSV, Excel)...", self.import_data, "Ctrl+I")
         self._add_action(menu_file, "Export Active Graph...", self.export_active_graph, "Ctrl+E")
+        self._add_action(menu_file, "Export multiple charts…", self.export_multiple_charts)
+        self._add_action(menu_file, "Manage saved presets…", self.manage_saved_presets)
         self._add_action(menu_file, "Copy Graph to Clipboard", self.copy_active_graph, "Ctrl+Shift+C")
         menu_file.addSeparator()
         act_exit = self._add_action(menu_file, "Exit", self.close)
@@ -586,6 +594,7 @@ class MainWindow(QMainWindow):
         # --- Plot Menu ---
         menu_plot = menubar.addMenu("&Plot")
         self._add_action(menu_plot, "Import data into a graph...", self.import_into_chart, "Ctrl+Shift+I")
+        self._add_action(menu_plot, "Chart from saved setup…", self.create_chart_from_active_sheet)
         self._add_action(menu_plot, "Scatter Plot", lambda: self.create_plot("scatter"))
         self._add_action(menu_plot, "Line Plot", lambda: self.create_plot("line"))
         self._add_action(menu_plot, "Line + Symbol", lambda: self.create_plot("line_symbol"))
@@ -668,6 +677,7 @@ class MainWindow(QMainWindow):
 
         # --- Help Menu ---
         menu_help = menubar.addMenu("&Help")
+        self._add_action(menu_help, "Find an action…", self.open_action_search, "Ctrl+Shift+P")
         self._add_action(menu_help, "Getting started...", self.show_getting_started)
         self._add_action(menu_help, "Check for Updates...", self.open_update_dialog)
         menu_help.addSeparator()
@@ -951,7 +961,7 @@ class MainWindow(QMainWindow):
             sw.enable_guided_sheet()
         sw.request_plot.connect(self.create_plot)
         sw.request_add_to_active_graph.connect(self.add_selected_columns_to_active_graph)
-        sw.data_modified.connect(self._on_sheet_data_modified)
+        sw.data_modified.connect(lambda: self._on_sheet_data_modified(wb.name, sheet.name))
         sw.selection_changed.connect(self._on_sheet_selection_changed)
         sw.request_jump_to_graph.connect(lambda graph_id: self._on_explorer_item_activated("graph", "", graph_id))
         sw.update_linked_graphs(self.project.graphs)
@@ -963,6 +973,50 @@ class MainWindow(QMainWindow):
         self.tab_metadata[idx] = ("sheet", sheet.name, wb.name, sw)
         return idx
 
+    def _choose_drop_layout(self, source, target):
+        from omnigraph.ui.dialogs.chart_drop_dialog import ChartDropDialog
+
+        dialog = ChartDropDialog(source, target.title, self)
+        return dialog.choice if dialog.exec() else None
+
+    def _add_worksheet_to_chart(self, workbook, sheet_name, chart_id, layout=""):
+        from omnigraph.core.chart_drop import create_drop_figure, worksheet_curves
+
+        target = next((graph for graph in self.project.graphs if graph.id == chart_id), None)
+        sheet = self.project.get_worksheet(workbook, sheet_name)
+        if target is None or sheet is None:
+            return
+        choice = layout or self._choose_drop_layout(f"{workbook} / {sheet_name}", target)
+        if choice is None:
+            return
+        if choice == "add":
+            self._on_explorer_item_activated("graph", "", chart_id)
+            view = self.get_active_graph_widget()
+            if view is not None and view.graph_model is target:
+                view.add_worksheet_series(workbook, sheet_name)
+            return
+        draft = GraphModel()
+        draft.theme = target.theme
+        curves, _ = worksheet_curves(sheet, workbook, draft, "line_symbol")
+        try:
+            graph = create_drop_figure(self.project, target, curves, choice)
+        except ValueError as error:
+            QMessageBox.information(self, "Could not create this chart", str(error))
+            return
+        self.project.graphs.append(graph)
+        self._on_explorer_item_activated("graph", graph.title, graph.id)
+        self._on_graph_curves_changed()
+        self.status_bar.showMessage(f"Created {graph.title}.", 5000)
+
+    def _drop_files_onto_chart(self, paths, target, layout=""):
+        paths = [path for path in paths if os.path.isfile(path)]
+        if not paths:
+            return
+        source = os.path.basename(paths[0]) if len(paths) == 1 else f"{len(paths)} data files"
+        choice = layout or self._choose_drop_layout(source, target)
+        if choice is not None:
+            self._show_import_dialog(initial_filepaths=paths, target_graph=target, drop_layout=choice)
+
     def _add_graph_view(self, graph):
         gw = GraphViewWidget(graph, self.project, self)
         gw.coordinates_changed.connect(self._on_mouse_coords)
@@ -970,6 +1024,7 @@ class MainWindow(QMainWindow):
         gw.labels_changed.connect(self._on_graph_labels_changed)
         gw.curves_changed.connect(self._on_graph_curves_changed)
         gw.request_replace_data.connect(lambda duplicate: self.replace_chart_data(graph, duplicate))
+        gw.request_save_chart_setup.connect(lambda: self.save_chart_setup(graph))
         gw.request_jump_to_sheet.connect(lambda s, w: self._on_explorer_item_activated("sheet", s, w))
         gw.set_interface_scale(self.interface_scale)
         if hasattr(self, "zoom_level") and self.zoom_level != 1.0:
@@ -1006,6 +1061,7 @@ class MainWindow(QMainWindow):
                 self._on_sheet_selection_changed(sw.get_selected_column_indexes())
         elif item_type == "graph":
             self._last_active_graph_widget = widget
+            widget.refresh_pending_plot()
             self.property_widget.set_active_graph(widget.graph_model)
             if hasattr(self, "act_del_col"):
                 self.act_del_col.setToolTip("Delete currently selected column(s)")
@@ -1290,12 +1346,17 @@ class MainWindow(QMainWindow):
     def _on_worksheet_property_changed(self):
         self.refresh_active_spreadsheet()
 
-    def _on_sheet_data_modified(self):
+    def _on_sheet_data_modified(self, workbook, sheet):
         self._update_workflow_actions()
-        # Refresh any open graphs that reference this sheet
-        for idx, meta in self.tab_metadata.items():
-            if meta[0] == "graph":
-                meta[3].refresh_plot()
+        active = self.center_tabs.currentWidget()
+        for kind, _, _, view in self.tab_metadata.values():
+            if kind == "graph" and any(
+                (curve.source_workbook, curve.source_sheet) == (workbook, sheet)
+                for curve in view.graph_model.curves
+            ):
+                view.plot_needs_refresh = True
+                if view is active:
+                    view.refresh_pending_plot()
 
     def _on_graph_labels_changed(self):
         gw = self.get_active_graph_widget()
@@ -1315,6 +1376,47 @@ class MainWindow(QMainWindow):
         for item_type, _, _, view in self.tab_metadata.values():
             if item_type == "sheet":
                 view.update_linked_graphs(self.project.graphs)
+
+    def open_action_search(self):
+        from omnigraph.ui.dialogs.action_search import ActionSearchDialog
+
+        current = self.center_tabs.currentWidget()
+        graph = current if isinstance(current, GraphViewWidget) else None
+        sheet = current if isinstance(current, SpreadsheetWidget) else None
+        actions = [
+            ("Import data…", "excel csv instrument text file", self.import_data),
+            ("Open project…", "file workspace", self.open_project),
+            ("Save project", "file workspace", self.save_project),
+            ("Manage saved presets…", "template chart setup import rename remove", self.manage_saved_presets),
+        ]
+        if graph:
+            actions.extend([
+                ("Set axis bounds…", "range minimum maximum limits x y", graph.canvas_widget.edit_axis_bounds),
+                ("Edit chart labels…", "title x y axis", self.open_quick_labels_dialog),
+                ("Edit series and legend…", "colors labels key", graph._open_legend_editor),
+                ("Choose columns to add…", "worksheet layer data series plot", self.open_add_layer_dialog),
+                ("Save chart setup…", "style template preset reuse", lambda: self.save_chart_setup(graph.graph_model)),
+                ("Export chart…", "save image png pdf svg", self.export_active_graph),
+            ])
+        if sheet:
+            actions.extend([
+                ("Create a line and symbol chart", "plot graph selected columns", lambda: self.create_plot("line_symbol")),
+                ("Create chart from saved setup…", "template reuse style preset", self.create_chart_from_active_sheet),
+                ("Apply a column formula…", "calculate transform worksheet", self.open_formula_dialog),
+                ("Process a signal…", "smooth filter derivative fft", self.open_smoothing_dialog),
+            ])
+        if graph or sheet:
+            actions.extend([
+                ("Fit a curve…", "linear regression gaussian model analysis", self.open_fit_wizard),
+                ("Find peaks…", "integration baseline analysis", self.open_peak_analysis_wizard),
+                ("Explore statistics…", "summary mean compare groups", self.open_statistics_dialog),
+            ])
+        if self.project.graphs:
+            actions.append(("Export multiple charts…", "batch save figures images", self.export_multiple_charts))
+        actions.append(("Getting started…", "help tutorial guidance", self.show_getting_started))
+        dialog = ActionSearchDialog(actions, self)
+        if dialog.exec() and dialog.selected_action:
+            dialog.selected_action()
 
     def open_add_layer_dialog(self):
         gw = self.get_active_graph_widget()
@@ -1521,16 +1623,22 @@ class MainWindow(QMainWindow):
         """Opens universal data import dialog with single or multi-file batch support."""
         self._show_import_dialog()
 
-    def _show_import_dialog(self, *, initial_filepaths=None, target_graph=None, plot=False):
+    def _show_import_dialog(self, *, initial_filepaths=None, target_graph=None, plot=False, drop_layout=None):
         dialog = ImportDialog(
             initial_filepaths=initial_filepaths, parent=self,
-            active_graph_title=target_graph.title if target_graph else None,
+            active_graph_title=target_graph.title if target_graph and drop_layout in {None, "add"} else None,
             plot_by_default=plot or target_graph is not None,
         )
+        if drop_layout is not None:
+            dialog.configure_chart_drop(drop_layout)
         if dialog.exec():
-            self._process_imported_results(dialog, target_graph=target_graph if dialog.add_to_active_graph else None)
+            target = target_graph if dialog.add_to_active_graph else None
+            if drop_layout in {None, "add"}:
+                self._process_imported_results(dialog, target_graph=target)
+            else:
+                self._process_imported_results(dialog, drop_target=target_graph, drop_layout=drop_layout)
 
-    def _process_imported_results(self, dlg: ImportDialog, target_graph=None):
+    def _process_imported_results(self, dlg: ImportDialog, target_graph=None, *, drop_target=None, drop_layout=None):
         """Processes single or multi-file batch import results from ImportDialog."""
         results = getattr(dlg, "imported_results", [])
         if not results:
@@ -1615,6 +1723,7 @@ class MainWindow(QMainWindow):
 
         # Auto comparison graph
         created_graph = None
+        layout_error = ""
         if auto_plot and imported_sheets:
             first_name = results[0]["name"]
             base_title = f"Comparison - {len(results)} Files" if len(results) > 1 else f"Plot - {first_name}"
@@ -1653,28 +1762,116 @@ class MainWindow(QMainWindow):
                         plot_type="errorbar" if error is not None else plot_type,
                     ))
 
-            if len(created_graph.curves) == initial_curve_count:
+            if drop_target is not None:
+                from omnigraph.core.chart_drop import create_drop_figure
+
+                try:
+                    created_graph = create_drop_figure(self.project, drop_target, created_graph.curves, drop_layout)
+                except ValueError as error:
+                    layout_error = str(error)
+                    created_graph = None
+            elif len(created_graph.curves) == initial_curve_count:
                 created_graph = None
-            elif target_graph is None:
+            if created_graph is not None and target_graph is None:
                 self.project.graphs.append(created_graph)
 
         self.explorer_widget.set_project(self.project)
 
         if created_graph:
             self._on_explorer_item_activated("graph", created_graph.title, created_graph.id)
-            self.refresh_active_graph()
+            if target_graph is not None:
+                self.refresh_active_graph()
             self._on_graph_curves_changed()
         elif imported_sheets:
             first_ws, first_wb = imported_sheets[0]
             self._on_explorer_item_activated("sheet", first_ws.name, first_wb)
 
-        if auto_plot and not created_graph:
+        if layout_error:
+            self.status_bar.showMessage("Data imported as worksheets.", 6000)
+            QMessageBox.information(self, "Data imported without a chart", layout_error)
+        elif auto_plot and not created_graph:
             self.status_bar.showMessage("Data imported. The chosen series was unavailable, so no chart was created.", 6000)
         else:
             self.status_bar.showMessage("Data imported and plotted." if created_graph else "Data imported.", 4000)
 
     def import_into_chart(self):
         self._show_import_dialog(target_graph=self.get_active_graph(), plot=True)
+
+    def manage_saved_presets(self):
+        from omnigraph.ui.dialogs.saved_presets_dialog import SavedPresetsDialog
+
+        SavedPresetsDialog(self).exec()
+
+    def save_chart_setup(self, graph):
+        from omnigraph.core.plot_editing import chart_setup
+        from omnigraph.ui.saved_settings import load_settings, store_settings
+
+        try:
+            setup = chart_setup(graph, self.project)
+        except ValueError as error:
+            QMessageBox.information(self, "Save chart setup", str(error))
+            return
+        name, confirmed = QInputDialog.getText(self, "Save chart setup", "Setup name", text=graph.title)
+        name = name.strip()
+        if not confirmed or not name:
+            return
+        setups = load_settings("charts/setups")
+        if name in setups and QMessageBox.question(
+            self, "Replace chart setup?", f"Replace the saved setup “{name}”?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No,
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        setups[name] = setup
+        store_settings("charts/setups", setups)
+        self.status_bar.showMessage(f"Saved chart setup “{name}”.", 4000)
+
+    def create_chart_from_active_sheet(self):
+        view = self.get_active_spreadsheet_widget()
+        if view is None:
+            self.status_bar.showMessage("Open a worksheet to create a chart from a saved setup.", 4000)
+            return
+        self.create_chart_from_setup(view.workbook_name, view.worksheet.name)
+
+    def create_chart_from_setup(self, workbook, sheet_name):
+        from omnigraph.core.plot_editing import chart_setup_mappings, rebind_chart_data
+        from omnigraph.ui.dialogs.replace_data_dialog import ReplaceDataDialog
+        from omnigraph.ui.saved_settings import load_settings
+
+        sheet = self.project.get_worksheet(workbook, sheet_name)
+        if sheet is None or not sheet.column_count():
+            return
+        setups = load_settings("charts/setups")
+        if not setups:
+            QMessageBox.information(self, "Chart from saved setup",
+                                    "Open a chart and choose Data → Save as chart setup first.")
+            return
+        selected, confirmed = QInputDialog.getItem(
+            self, "Chart from saved setup", "Setup", sorted(setups, key=str.casefold), editable=False,
+        )
+        if not confirmed:
+            return
+        setup = setups[selected]
+        graph = GraphModel.from_dict(setup["style"])
+        mappings = chart_setup_mappings(setup, workbook, sheet)
+        if not mappings:
+            dialog = ReplaceDataDialog(
+                self.project, graph, duplicate=True, parent=self,
+                source=(workbook, sheet_name), column_specs=setup["columns"],
+            )
+            if not dialog.exec():
+                return
+            mappings = dialog.mappings
+        base_title = f"{mappings[0][1]} — {selected}"
+        title = base_title
+        suffix = 2
+        while self.project.get_graph(title):
+            title = f"{base_title} ({suffix})"
+            suffix += 1
+        new_graph = rebind_chart_data(graph, mappings, copy_title=title)
+        new_graph.title_text = mappings[0][1]
+        self.project.graphs.append(new_graph)
+        self._on_explorer_item_activated("graph", title, new_graph.id)
+        self._on_graph_curves_changed()
 
     def replace_chart_data(self, graph, duplicate=False):
         from omnigraph.core.plot_editing import rebind_chart_data
@@ -1699,6 +1896,24 @@ class MainWindow(QMainWindow):
             self.refresh_active_graph()
         self._on_graph_curves_changed()
         self.status_bar.showMessage("Chart copy created" if duplicate else "Chart data replaced", 4000)
+
+    def export_multiple_charts(self):
+        from omnigraph.graphing.plot_manager import PlotManager
+        from omnigraph.ui.dialogs.item_selection import choose_items
+
+        graphs = list(self.project.graphs)
+        if not graphs:
+            QMessageBox.information(self, "Export multiple charts", "Create a chart first.")
+            return
+        selected = choose_items(
+            self, "Export multiple charts", "Select the charts to save with the same format and size.",
+            "Choose export settings", [graph.title for graph in graphs], range(len(graphs)),
+        )
+        if selected:
+            graphs = [graphs[index] for index in selected]
+            manager = PlotManager(graphs[0], self.project)
+            manager.render()
+            ExportDialog(manager, self, batch_graphs=graphs).exec()
 
     def export_active_graph(self):
         gw = self.get_active_graph_widget()
@@ -1925,7 +2140,6 @@ class MainWindow(QMainWindow):
             dlg = FormulaDialog(ws, col_idx, undo_stack=sw.undo_stack, parent=self)
             if dlg.exec():
                 sw.refresh_view()
-                self._on_sheet_data_modified()
 
     def open_statistics_dialog(self):
         view = self.center_tabs.currentWidget()
@@ -2269,7 +2483,8 @@ class MainWindow(QMainWindow):
 
     def open_peak_analysis_wizard(self):
         report_count = len(self.project.reports)
-        dlg = PeakAnalysisDialog(project=self.project, active_graph=self.get_active_graph(), parent=self)
+        dlg = PeakAnalysisDialog(project=self.project, active_graph=self.get_active_graph(), parent=self,
+                                 active_worksheet=self.get_active_worksheet())
         if dlg.exec():
             self._show_analysis_result(report_count)
 
@@ -2279,11 +2494,16 @@ class MainWindow(QMainWindow):
             return
         sw = self.get_active_spreadsheet_widget()
         col_idx = sw.get_selected_column_index() if sw else 1
+        from copy import deepcopy
+        from omnigraph.core.undo_manager import WorksheetSnapshotCommand
+
+        before = deepcopy(ws.to_dict())
         dlg = SmoothDialog(ws, selected_col_idx=col_idx, parent=self)
-        if dlg.exec():
-            if sw:
-                sw.refresh_view()
-            self._on_sheet_data_modified()
+        if dlg.exec() and sw:
+            sw.undo_stack.push(WorksheetSnapshotCommand(
+                ws, before, ws.to_dict(), "Process signal", callback=sw.refresh_view,
+            ))
+            self.status_bar.showMessage("Signal processed. Use Undo to restore the previous data.", 5000)
 
     def load_sample(self, sample_name: str):
         if not self._confirm_pending_changes():

@@ -25,13 +25,16 @@ class PeakAnalysisDialog(QDialog):
         project: Project,
         active_graph: Optional[GraphModel] = None,
         parent=None,
+        *,
+        active_worksheet: Optional[Worksheet] = None,
     ):
         super().__init__(parent)
         self.project = project
         self.active_graph = active_graph
+        self.active_worksheet = active_worksheet
         self.last_result: Optional[PeakAnalysisResult] = None
 
-        self.setWindowTitle("Peak Integration & Baseline Analysis")
+        self.setWindowTitle("Find and measure peaks")
         self.resize(720, 560)
         self.setMinimumSize(540, 440)
         self._init_ui()
@@ -131,11 +134,12 @@ class PeakAnalysisDialog(QDialog):
         al = QVBoxLayout(grp_actions)
         al.setContentsMargins(8, 12, 8, 8)
         al.setSpacing(6)
-        self.chk_add_markers = QCheckBox("Add peak callout annotations to active graph")
-        self.chk_add_markers.setChecked(True)
+        self.chk_add_markers = QCheckBox("Mark peaks on this chart")
+        self.chk_add_markers.setChecked(self.active_graph is not None)
+        self.chk_add_markers.setEnabled(self.active_graph is not None)
         al.addWidget(self.chk_add_markers)
 
-        self.chk_create_report = QCheckBox("Generate Peak Integration Report tab")
+        self.chk_create_report = QCheckBox("Create a peak results report")
         self.chk_create_report.setChecked(True)
         al.addWidget(self.chk_create_report)
         left_layout.addWidget(grp_actions)
@@ -164,9 +168,17 @@ class PeakAnalysisDialog(QDialog):
         self.table_peaks.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table_peaks.setMinimumHeight(180)
         self.table_peaks.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.preview_status = QLabel()
+        self.preview_status.setWordWrap(True)
+        self.preview_status.setProperty("role", "muted")
+        tl.addWidget(self.preview_status)
         tl.addWidget(self.table_peaks)
 
         content_layout.addWidget(grp_table, stretch=1)
+        if self.combo_sheet.count() > 1:
+            batch = QPushButton("Find peaks across worksheets…")
+            batch.clicked.connect(self._peaks_across_worksheets)
+            content_layout.addWidget(batch)
 
         scroll.setWidget(content_widget)
         main_layout.addWidget(scroll, 1)
@@ -196,11 +208,18 @@ class PeakAnalysisDialog(QDialog):
                     self.combo_sheet.setCurrentIndex(index)
                     self.combo_x_col.setCurrentIndex(max(0, self.combo_x_col.findData(curve.x_col_idx)))
                     self.combo_y_col.setCurrentIndex(max(0, self.combo_y_col.findData(curve.y_col_idx)))
+        elif self.active_worksheet is not None:
+            for index in range(self.combo_sheet.count()):
+                if self.project.get_worksheet(*self.combo_sheet.itemData(index)) is self.active_worksheet:
+                    self.combo_sheet.setCurrentIndex(index)
+                    break
         self._run_peak_search(quiet=True)
 
     def _clear_cached_result(self, *args):
         self.last_result = None
         self.table_peaks.setRowCount(0)
+        if hasattr(self, "preview_status"):
+            self.preview_status.setText("Use Find peaks and integrate to preview these settings.")
 
     def _populate_columns(self):
         self._clear_cached_result()
@@ -267,17 +286,19 @@ class PeakAnalysisDialog(QDialog):
 
         x_arr, y_arr, _ = x_col.get_valid_numeric_pairs(y_col)
         if len(x_arr) < 5:
+            self.preview_status.setText("Choose X and Y columns with at least five included numeric pairs.")
             if not quiet:
-                QMessageBox.warning(self, "Data Error", "At least 5 valid data points required.")
+                QMessageBox.warning(self, "More data needed", self.preview_status.text())
             return None
 
-        baseline_mode = self.combo_baseline.currentData()
-        prom = self.spn_prominence.value()
-        dist = self.spn_distance.value()
-
         try:
-            res = PeakAnalyzer.analyze_peaks(x_arr, y_arr, baseline_mode=baseline_mode, min_prominence_pct=prom, min_distance=dist)
+            res = self._find_peaks(x_arr, y_arr)
             self.last_result = res
+            if res.peaks:
+                count = len(res.peaks)
+                self.preview_status.setText(f"{count} peak found." if count == 1 else f"{count} peaks found.")
+            else:
+                self.preview_status.setText("No peaks found. Try a lower minimum prominence or a different baseline.")
 
             # Populate table
             self.table_peaks.setRowCount(len(res.peaks))
@@ -294,6 +315,31 @@ class PeakAnalysisDialog(QDialog):
             if not quiet:
                 QMessageBox.critical(self, "Peak Detection Failed", str(e))
             return None
+
+    def _find_peaks(self, x, y):
+        return PeakAnalyzer.analyze_peaks(
+            x, y, baseline_mode=self.combo_baseline.currentData(),
+            min_prominence_pct=self.spn_prominence.value(), min_distance=self.spn_distance.value(),
+        )
+
+    def _peaks_across_worksheets(self):
+        from omnigraph.analysis.reporting import result_number
+        from omnigraph.ui.dialogs.batch_analysis import run_batch
+
+        def summarize(result):
+            positions = ", ".join(result_number(peak.x_center) for peak in result.peaks) or "—"
+            return len(result.peaks), result_number(result.total_area), positions
+
+        settings = [
+            ("Baseline", self.combo_baseline.currentText()),
+            ("Minimum prominence", f"{self.spn_prominence.value():g}%"),
+            ("Minimum peak distance", self.spn_distance.value()),
+        ]
+        run_batch(
+            self, "Compare peak results", self.combo_sheet.currentData(),
+            self.combo_x_col.currentData(), self.combo_y_col.currentData(),
+            self._find_peaks, summarize, ("Peaks", "Total net area", "Peak centers (X)"), settings, 5,
+        )
 
     def _on_accept(self):
         res = self.last_result or self._run_peak_search()

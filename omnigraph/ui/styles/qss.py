@@ -69,6 +69,11 @@ QGroupBox::indicator { subcontrol-origin: margin; subcontrol-position: top left;
 QDockWidget { background: @bg; font-weight: 600; }
 QDockWidget::title { background: @bg; color: @muted; padding: 10px 12px; border-bottom: 1px solid @line; }
 QWidget#ProjectHeaderCard { background: @surface; border: 1px solid @line; border-radius: 8px; }
+QFrame#ChartLayoutPicker { background: @surface; border: 1px solid @border; border-radius: 9px; }
+QToolButton#ChartLayoutTile { background: @inset; border: 1px solid @line; border-radius: 6px; padding: 4px 7px; }
+QToolButton#ChartLayoutTile:hover, QToolButton#ChartLayoutTile:focus, QToolButton#ChartLayoutTile[dropTarget="true"] {
+    background: @selection; border-color: @accent;
+}
 QWidget#ProjectExplorerWidget { background: @bg; }
 QWidget#ProjectExplorerWidget QTreeWidget { background: transparent; border: none; }
 QTreeWidget, QListWidget { background: @surface; border: 1px solid @line; border-radius: 6px; outline: none; }

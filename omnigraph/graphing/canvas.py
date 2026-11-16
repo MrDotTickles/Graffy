@@ -4,7 +4,8 @@ Integrates Matplotlib with PyQt6, custom mouse navigation, and tool switching.
 """
 
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSizePolicy, QInputDialog
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
+from omnigraph.worksheet_drag import WorksheetDragData
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 
@@ -20,7 +21,8 @@ class OmniCanvas(QWidget):
     point_inspected = pyqtSignal(str, float, float, int)  # curve, x, y, row
     range_selected = pyqtSignal(float, float)  # xmin, xmax
     labels_changed = pyqtSignal()  # emitted when title or axis labels are edited
-    files_dropped = pyqtSignal(list)  # list of file paths dropped onto canvas
+    worksheet_dropped = pyqtSignal(str, str, str)  # workbook, worksheet, optional layout
+    files_dropped = pyqtSignal(list, str)  # file paths, optional layout
     point_mask_toggled = pyqtSignal(str, int)  # curve_label, row_idx
     request_significance_bracket = pyqtSignal(float, float, float)  # x1, x2, y
 
@@ -30,6 +32,7 @@ class OmniCanvas(QWidget):
         self.project = project
         self._last_mouse_data = None
         self._last_inspected = None
+        self._drop_picker = None
 
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setAcceptDrops(True)
@@ -58,7 +61,6 @@ class OmniCanvas(QWidget):
 
         # Wire hotkey 'M' for point masking
         from PyQt6.QtGui import QKeySequence, QShortcut
-        from PyQt6.QtCore import Qt
         self.shortcut_mask = QShortcut(QKeySequence(Qt.Key.Key_M), self)
         self.shortcut_mask.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self.shortcut_mask.activated.connect(self._toggle_mask_at_cursor)
@@ -66,20 +68,63 @@ class OmniCanvas(QWidget):
         # Initial render
         self.refresh()
 
+    def _show_drop_layouts(self):
+        if self._drop_picker is None:
+            from omnigraph.ui.chart_layout_picker import ChartLayoutPicker
+
+            self._drop_picker = ChartLayoutPicker("Drop on a layout", self)
+            self._drop_picker.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        picker = self._drop_picker
+        area = self.canvas.geometry()
+        size = picker.preferred_size()
+        if size.width() + 16 > area.width() or size.height() + 16 > area.height():
+            picker.hide()
+            return
+        picker.resize(size)
+        picker.move(area.x() + (area.width() - size.width()) // 2, area.y() + 8)
+        picker.raise_()
+        picker.show()
+
+    def _drop_layout_at(self, point):
+        picker = self._drop_picker
+        return picker.layout_at(picker.mapFrom(self, point)) if picker is not None else ""
+
+    def _hide_drop_layouts(self):
+        if self._drop_picker is not None:
+            self._drop_picker.highlight("")
+            self._drop_picker.hide()
+
     def dragEnterEvent(self, event):
-        if event.mimeData().hasUrls():
+        mime = event.mimeData()
+        worksheet = isinstance(mime, WorksheetDragData) and mime.project is self.project
+        if worksheet or any(url.isLocalFile() for url in mime.urls()):
             event.acceptProposedAction()
+            self._show_drop_layouts()
         else:
             super().dragEnterEvent(event)
 
+    def dragMoveEvent(self, event):
+        if self._drop_picker is not None:
+            self._drop_picker.highlight(self._drop_layout_at(event.position().toPoint()))
+        event.acceptProposedAction()
+
+    def dragLeaveEvent(self, event):
+        self._hide_drop_layouts()
+        event.accept()
+
     def dropEvent(self, event):
-        if event.mimeData().hasUrls():
-            urls = event.mimeData().urls()
-            paths = [u.toLocalFile() for u in urls if u.toLocalFile()]
-            if paths:
-                event.acceptProposedAction()
-                self.files_dropped.emit(paths)
-                return
+        choice = self._drop_layout_at(event.position().toPoint())
+        self._hide_drop_layouts()
+        mime = event.mimeData()
+        if isinstance(mime, WorksheetDragData) and mime.project is self.project:
+            event.acceptProposedAction()
+            self.worksheet_dropped.emit(mime.workbook, mime.sheet, choice)
+            return
+        paths = [url.toLocalFile() for url in mime.urls() if url.isLocalFile()]
+        if paths:
+            event.acceptProposedAction()
+            self.files_dropped.emit(paths, choice)
+            return
         super().dropEvent(event)
 
     def _on_point_inspected(self, label: str, x: float, y: float, row: int):
@@ -109,6 +154,7 @@ class OmniCanvas(QWidget):
     def refresh(self):
         """Re-render graph from model."""
         self.plot_manager.render()
+        self.toolbar.update()
         self.tool_manager.ax = self.plot_manager.ax
         self.tool_manager.ax2 = self.plot_manager.ax2
         self.tool_manager.set_data_curves(self.plot_manager.rendered_curves)
@@ -143,36 +189,101 @@ class OmniCanvas(QWidget):
                     self.open_legend_editor()
                     return
 
-        # Normalized coordinates in figure [0, 1]
-        width, height = self.canvas.get_width_height()
-        if width <= 0 or height <= 0:
+        if event.x is None or event.y is None:
             return
+        renderer = self.canvas.get_renderer()
+        manager = self.plot_manager
 
-        x_norm = event.x / width
-        y_norm = event.y / height
+        def hit(text):
+            return (text.get_visible() and bool(text.get_text())
+                    and text.get_window_extent(renderer).padded(4).contains(event.x, event.y))
 
-        # 1. Top region -> Edit Graph Title
-        if y_norm >= 0.78:
-            self.edit_graph_title()
-            return
+        # Labels are outside the plotting area. Use their actual painted bounds.
+        for panel in manager.fig.axes:
+            y_key = self._y_axis_key(panel)
+            if panel.yaxis.get_visible() and hit(panel.yaxis.label):
+                {"y": self.edit_y_title, "y2": self.edit_y2_title,
+                 "y_bottom": self.edit_bottom_y_title,
+                 "right_panel_y": lambda: self._edit_right_panel_label("y")}[y_key]()
+                return
+            if panel.xaxis.get_visible() and hit(panel.xaxis.label):
+                if self._is_right_comparison_panel(panel):
+                    self._edit_right_panel_label("x")
+                else:
+                    self.edit_x_title()
+                return
+        for panel in manager.fig.axes:
+            if hit(panel.title):
+                self.edit_graph_title()
+                return
 
-        # 2. Bottom region -> Edit X-Axis Label
-        if y_norm <= 0.22:
-            self.edit_x_title()
-            return
+        for panel in manager.fig.axes:
+            if panel.xaxis.get_visible() and any(hit(label) for label in panel.get_xticklabels()):
+                self.edit_axis_bounds("right_panel_x" if self._is_right_comparison_panel(panel) else "x")
+                return
+            if panel.yaxis.get_visible() and any(hit(label) for label in panel.get_yticklabels()):
+                self.edit_axis_bounds(self._y_axis_key(panel))
+                return
+        if event.inaxes is not None:
+            self._open_quick_labels()
 
-        # 3. Left region -> Edit Left Y-Axis Label
-        if x_norm <= 0.22:
-            self.edit_y_title()
-            return
+    def _is_right_comparison_panel(self, panel):
+        return (self.graph_model.comparison_panels and self.graph_model.layout_mode == "grid_1x2"
+                and panel is self.plot_manager.axes[1])
 
-        # 4. Right region (if twin-x) -> Edit Right Y-Axis Label
-        if x_norm >= 0.78 and self.plot_manager.ax2 is not None:
-            self.edit_y2_title()
-            return
+    def _edit_right_panel_label(self, axis):
+        field = f"right_panel_{axis}_title"
+        title = f"Right panel {axis.upper()} label"
+        text, accepted = QInputDialog.getText(self, title, title, text=getattr(self.graph_model, field))
+        if accepted:
+            setattr(self.graph_model, field, text.strip())
+            self.refresh()
+            self.labels_changed.emit()
 
-        # 5. Middle plot area -> Open all-in-one QuickLabelsDialog
-        self._open_quick_labels()
+    def _y_axis_key(self, panel):
+        manager = self.plot_manager
+        if self._is_right_comparison_panel(panel):
+            return "right_panel_y"
+        if panel is manager.ax2:
+            return "y2"
+        if panel is manager.ax_bottom and self.graph_model.layout_mode in {"stacked_2x1", "grid_2x1"}:
+            return "y_bottom"
+        return "y"
+
+    def edit_axis_bounds(self, focus_axis=""):
+        """Open the bounds editor for the axes drawn on this chart."""
+        from omnigraph.ui.dialogs.axis_bounds_dialog import AxisBoundsDialog
+
+        manager = self.plot_manager
+        stacked = self.graph_model.layout_mode in {"stacked_2x1", "grid_2x1"}
+        axes = [
+            ("x", "Horizontal (X)", manager.ax, "x"),
+            ("y", "Upper vertical (Y)" if stacked else "Vertical (Y)", manager.ax, "y"),
+        ]
+        if self.graph_model.comparison_panels and self.graph_model.layout_mode == "grid_1x2":
+            axes = [
+                ("x", "Left panel horizontal (X)", manager.ax, "x"),
+                ("y", "Left panel vertical (Y)", manager.ax, "y"),
+                ("right_panel_x", "Right panel horizontal (X)", manager.axes[1], "x"),
+                ("right_panel_y", "Right panel vertical (Y)", manager.axes[1], "y"),
+            ]
+        if manager.ax2 is not None:
+            axes.append(("y2", "Right vertical (Y)", manager.ax2, "y"))
+        if stacked and manager.ax_bottom is not None:
+            axes.append(("y_bottom", "Lower vertical (Y)", manager.ax_bottom, "y"))
+        dialog = AxisBoundsDialog(self.graph_model, axes, focus_axis=focus_axis, parent=self)
+        if dialog.exec():
+            self.refresh()
+            self.labels_changed.emit()
+
+    def edit_bottom_y_title(self):
+        text, ok = QInputDialog.getText(
+            self, "Edit Lower Y-Axis Label", "Lower Y-Axis Label:", text=self.graph_model.y_bottom_title or "",
+        )
+        if ok:
+            self.graph_model.y_bottom_title = text.strip()
+            self.refresh()
+            self.labels_changed.emit()
 
     def edit_graph_title(self):
         """Interactive prompt to edit graph title."""

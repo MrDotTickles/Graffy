@@ -541,8 +541,6 @@ class SpreadsheetWidget(QWidget):
     def _notify_data_modified(self, status_msg: Optional[str] = None):
         self.data_modified.emit()
         win = self.window()
-        if hasattr(win, "_on_sheet_data_modified"):
-            win._on_sheet_data_modified()
         if status_msg and hasattr(win, "statusBar") and win.statusBar():
             win.statusBar().showMessage(status_msg, 3000)
 
@@ -960,7 +958,7 @@ class SpreadsheetWidget(QWidget):
         row_size = max(20, int(26 * zoom))
         self.table_view.horizontalHeader().setDefaultSectionSize(section_size)
         self.table_view.verticalHeader().setDefaultSectionSize(row_size)
-        self.refresh_view()
+        self.table_view.viewport().update()
 
     def _clear_col(self, col_idx: int):
         col = self.worksheet.get_column(col_idx)

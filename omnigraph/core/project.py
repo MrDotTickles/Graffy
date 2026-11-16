@@ -185,6 +185,9 @@ class GraphModel:
         self.y_title: str = y_title
         self.y2_title: str = y2_title
         self.y_bottom_title: str = "Bottom Y"
+        self.comparison_panels: bool = False
+        self.right_panel_x_title: str = ""
+        self.right_panel_y_title: str = ""
         self.title_text: str = title_text
         self.panel_label: str = ""  # Quick publication panel autograph e.g. '(A)', '(B)', 'Figure 1'
 
@@ -199,6 +202,17 @@ class GraphModel:
         self.y_auto_limits: bool = True
         self.y_min: Optional[float] = None
         self.y_max: Optional[float] = None
+
+        self.y_bottom_auto_limits: bool = True
+        self.y_bottom_min: Optional[float] = None
+        self.y_bottom_max: Optional[float] = None
+
+        self.right_panel_x_auto_limits: bool = True
+        self.right_panel_x_min: Optional[float] = None
+        self.right_panel_x_max: Optional[float] = None
+        self.right_panel_y_auto_limits: bool = True
+        self.right_panel_y_min: Optional[float] = None
+        self.right_panel_y_max: Optional[float] = None
 
         self.y2_auto_limits: bool = True
         self.y2_min: Optional[float] = None
@@ -300,6 +314,15 @@ class GraphModel:
             "y_title": self.y_title,
             "y2_title": self.y2_title,
             "y_bottom_title": self.y_bottom_title,
+            "comparison_panels": self.comparison_panels,
+            "right_panel_x_title": self.right_panel_x_title,
+            "right_panel_y_title": self.right_panel_y_title,
+            "right_panel_x_auto_limits": self.right_panel_x_auto_limits,
+            "right_panel_x_min": self.right_panel_x_min,
+            "right_panel_x_max": self.right_panel_x_max,
+            "right_panel_y_auto_limits": self.right_panel_y_auto_limits,
+            "right_panel_y_min": self.right_panel_y_min,
+            "right_panel_y_max": self.right_panel_y_max,
             "title_text": self.title_text,
             "panel_label": getattr(self, "panel_label", ""),
             "x_scale": self.x_scale,
@@ -311,6 +334,9 @@ class GraphModel:
             "y_auto_limits": self.y_auto_limits,
             "y_min": self.y_min,
             "y_max": self.y_max,
+            "y_bottom_auto_limits": self.y_bottom_auto_limits,
+            "y_bottom_min": self.y_bottom_min,
+            "y_bottom_max": self.y_bottom_max,
             "y2_auto_limits": self.y2_auto_limits,
             "y2_min": self.y2_min,
             "y2_max": self.y2_max,
@@ -365,6 +391,18 @@ class GraphModel:
         g.y_auto_limits = d.get("y_auto_limits", True)
         g.y_min = d.get("y_min")
         g.y_max = d.get("y_max")
+        g.y_bottom_auto_limits = d.get("y_bottom_auto_limits", True)
+        g.y_bottom_min = d.get("y_bottom_min")
+        g.y_bottom_max = d.get("y_bottom_max")
+        g.comparison_panels = d.get("comparison_panels", False)
+        g.right_panel_x_title = d.get("right_panel_x_title", "")
+        g.right_panel_y_title = d.get("right_panel_y_title", "")
+        g.right_panel_x_auto_limits = d.get("right_panel_x_auto_limits", True)
+        g.right_panel_x_min = d.get("right_panel_x_min")
+        g.right_panel_x_max = d.get("right_panel_x_max")
+        g.right_panel_y_auto_limits = d.get("right_panel_y_auto_limits", True)
+        g.right_panel_y_min = d.get("right_panel_y_min")
+        g.right_panel_y_max = d.get("right_panel_y_max")
         g.y2_auto_limits = d.get("y2_auto_limits", True)
         g.y2_min = d.get("y2_min")
         g.y2_max = d.get("y2_max")
