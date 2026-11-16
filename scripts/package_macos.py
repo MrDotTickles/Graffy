@@ -5,8 +5,24 @@ import platform
 import subprocess
 import sys
 import tempfile
+import time
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def create_dmg(staging: Path, destination: Path):
+    command = ["hdiutil", "create", "-volname", "Graffy", "-srcfolder",
+               str(staging), "-ov", "-format", "UDZO", str(destination)]
+    for delay in (2, 4, 8, 0):
+        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        if result.stdout:
+            print(result.stdout.rstrip(), flush=True)
+        if result.returncode == 0:
+            return
+        if not delay or "resource busy" not in result.stdout.casefold():
+            result.check_returncode()
+        print(f"Disk image creation was busy. Retrying in {delay} seconds.", flush=True)
+        time.sleep(delay)
 
 
 def main():
@@ -31,8 +47,7 @@ def main():
             "Updating? Save your work and quit Graffy before replacing it.\n"
             "Support: https://github.com/MrDotTickles/Graffy/issues\n",
             encoding="utf-8")
-        subprocess.run(["hdiutil", "create", "-volname", "Graffy", "-srcfolder",
-                        str(staging), "-ov", "-format", "UDZO", str(stem) + ".dmg"], check=True)
+        create_dmg(staging, stem.with_suffix(".dmg"))
     subprocess.run(["hdiutil", "verify", str(stem) + ".dmg"], check=True)
     subprocess.run(["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent",
                     str(app), str(stem) + ".zip"], check=True)

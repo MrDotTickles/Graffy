@@ -7,7 +7,11 @@ installed = shell.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\Programs\Graffy
 portable = root & "\dist\Graffy\Graffy.exe"
 installer = root & "\dist\Graffy_Windows_Setup.exe"
 python = root & "\.venv\Scripts\pythonw.exe"
-If files.FileExists(installed) Then
+' A configured Git checkout is the maintainer's local build.
+If (files.FolderExists(root & "\.git") Or files.FileExists(root & "\.git")) And _
+        files.FileExists(root & "\main.py") And files.FileExists(python) Then
+    command = Chr(34) & python & Chr(34) & " " & Chr(34) & root & "\main.py" & Chr(34)
+ElseIf files.FileExists(installed) Then
     command = Chr(34) & installed & Chr(34)
 ElseIf files.FileExists(portable) Then
     command = Chr(34) & portable & Chr(34)
