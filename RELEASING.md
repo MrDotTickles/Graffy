@@ -33,6 +33,7 @@ A normal push runs tests without publishing a new version.
 The workflow tests all three target platforms, launches each compiled app briefly,
 creates the Windows installer and Mac disk images, and uploads all packages to a
 hidden draft. Only a complete set is published. A failed build does not announce an update.
+If packaging fails with a temporary error, retry the failed jobs for that release in GitHub Actions and verify the published downloads.
 
 Keep the repository **public** so everyone can download and the app can check for
 updates without a login. Repository Settings → Actions must allow workflows.
@@ -41,7 +42,7 @@ Organization policy can restrict this. Do not embed GitHub credentials in the ap
 
 ## 3. Give people one link
 
-**Share this link:** https://github.com/MrDotTickles/Graffy
+**Share the [Graffy download website](https://graffy-scientific-graphing.kylekimura2006.chatgpt.site).**
 
 The README begins with download links for Windows, Apple Silicon Mac, and Intel Mac.
 You can also share https://github.com/MrDotTickles/Graffy/releases/latest directly.

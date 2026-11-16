@@ -1,8 +1,8 @@
 # Graffy
 
-**[Download Graffy for Windows or Mac](https://graffy-scientific-graphing.recentdream1.chatgpt.site)** · No Python or command prompt needed.
+**[Download Graffy for Windows or Mac](https://graffy-scientific-graphing.kylekimura2006.chatgpt.site)** · No Python or command prompt needed.
 
-**Already have this folder? Open `START HERE.html`, or double-click `Start Graffy.vbs` on Windows.**
+**Already have this folder? Open `START HERE.html` for the install and update guide.**
 
 After installation, use the Graffy desktop/Start menu shortcut on Windows, or Graffy in Applications on Mac. No terminal or separate Python installation is needed for packaged apps.
 
@@ -19,7 +19,7 @@ analyze peaks, and export publication-ready figures from one desktop app.
 | Mac with Apple Silicon (M-series) | [**Download for Mac — Apple Silicon**](https://github.com/MrDotTickles/Graffy/releases/latest/download/Graffy_macOS_arm64.dmg) |
 | Mac with an Intel processor | [**Download for Mac — Intel**](https://github.com/MrDotTickles/Graffy/releases/latest/download/Graffy_macOS_x86_64.dmg) |
 
-**Measured Windows build:** about 72 MB to download; about 244 MB of app files after installation.
+**Measured Windows 1.0.7 build:** 71.8 MB to download and 243.6 MB of app files after installation.
 Python and scientific libraries are included. [Size details](docs/PACKAGE_SIZE.md).
 
 [All releases and portable downloads](https://github.com/MrDotTickles/Graffy/releases/latest)
@@ -33,12 +33,14 @@ DMG and drag Graffy into Applications. These builds are currently unsigned, so y
 operating system may display a warning or block launch; see the installation guide.
 Linux, phones, tablets, and Chromebooks do not currently have supported installers.
 
-![Graffy showing a spectroscopy worksheet and scientific graph](docs/images/graffy.png)
+![Graffy showing the four drag-to-plot layout previews over a sample spectroscopy chart](docs/images/graffy.png)
 
 ## What you can do
 
 - Import CSV and Excel data, edit worksheets, apply formulas, and undo changes.
 - Create scatter, line, bar, error-bar, distribution, waterfall, and multi-panel plots.
+- Drop data onto a chart to preview a layout, and edit numeric axis bounds directly.
+- Save chart setups and import presets, repeat fits or peak analysis across worksheets, and export several charts together.
 - Fit linear, polynomial, Gaussian, exponential, Hill dose-response, and other models.
 - Find peaks, integrate signals, smooth data, calculate derivatives, and run statistics.
 - Style figures with scientific publication themes and export PNG, PDF, SVG, and TIFF.
@@ -47,7 +49,7 @@ Linux, phones, tablets, and Chromebooks do not currently have supported installe
 ## Updates
 
 Graffy checks for updates after opening and every six hours while running. A new
-version appears in the update center with release notes and a download button.
+version appears in a banner with a **View update** button for release notes and the download.
 You can also use **Help → Check for Updates** or disable automatic checks there.
 Save your work and quit Graffy before installing. Windows reuses your installed
 location; Mac users replace the app in Applications. Saved project files are separate.
@@ -62,7 +64,7 @@ before publishing a complete release. Keep the repository public for public down
 
 To run from source, install Python 3.13, create a virtual environment, and install
 `requirements-dev.txt`. Then use `scripts/Launch_Graffy.bat`, `scripts/Launch_Graffy.command`, or
-`python main.py`. App users should use the downloads above.
+`python main.py`. In a configured Windows checkout, `Start Graffy.vbs` opens the local code. Use the Start menu or Applications for the installed release.
 
 | Folder | Contents |
 | --- | --- |
@@ -84,8 +86,7 @@ the launch and release buttons run it automatically if missing. Running source
 code locally will recreate several hundred megabytes of scientific libraries.
 
 Use **Import data** for files or pasted text. The preview shows detected headers,
-numeric columns, and values that will be left blank. **Plot → Import data into a graph**
-and dropping files onto a chart open the same preview with a chart destination.
+numeric columns, and values that will be left blank. **Plot → Import data into a graph** opens the import preview. When you drag a data file onto a chart, choose a layout preview first.
 [Import and dialog guide](docs/IMPORT_AND_DIALOGS.md).
 
 The redesigned desktop workflow and validation notes are documented in [Desktop redesign](docs/DESKTOP_REDESIGN.md). Closing tabs keeps project data intact; reopen items from the project panel.

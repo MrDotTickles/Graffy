@@ -22,7 +22,7 @@ ElseIf files.FileExists(python) Then
     command = Chr(34) & python & Chr(34) & " " & Chr(34) & root & "\main.py" & Chr(34)
 Else
     MsgBox "Download the Graffy Windows installer from the Graffy download website. Open it, click Install, then launch Graffy from your desktop. You do not need Python.", vbInformation, "Install Graffy"
-    shell.Run "https://graffy-scientific-graphing.recentdream1.chatgpt.site", 1, False
+    shell.Run "https://graffy-scientific-graphing.kylekimura2006.chatgpt.site", 1, False
     WScript.Quit
 End If
 For Each arg In WScript.Arguments
