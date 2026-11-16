@@ -568,17 +568,37 @@ class PlotManager:
         x_m, y_m, _ = self._get_curve_masked_data_with_indices(curve)
         return x_m, y_m
 
+    def annotation_axes(self, annotation):
+        if annotation.get("axis") == "secondary" and self.ax2 is not None:
+            return self.ax2
+        panel = annotation.get("panel", 0)
+        return self.axes[panel] if isinstance(panel, int) and 0 <= panel < len(self.axes) else self.ax
+
     def _render_annotations(self):
         """Draws text annotations, reference lines, confidence bands, and significance brackets."""
+        self.annotation_artists = []
+        theme = THEMES.get(self.model.theme, THEMES["Origin Classic"])
         for ann in self.model.annotations:
             atype = ann.get("type")
             if atype == "text":
-                x = ann.get("x", 0.5)
-                y = ann.get("y", 0.5)
-                text = ann.get("text", "")
+                ax = self.annotation_axes(ann)
                 color = ann.get("color", "#000000")
-                fsize = ann.get("font_size", 10)
-                self.ax.text(x, y, text, color=color, fontsize=fsize, zorder=6)
+                background = ann.get("background", "none")
+                if background == "auto":
+                    background = theme.get("axes.facecolor", "#ffffff")
+                box = {"boxstyle": "round,pad=0.24", "facecolor": background, "edgecolor": "none"} if background != "none" else None
+                artist = ax.text(
+                    ann.get("x", 0.5), ann.get("y", 0.5), ann.get("text", ""),
+                    color=theme.get("axes.labelcolor", "#202b40") if color == "auto" else color,
+                    fontsize=ann.get("font_size", 10), rotation=ann.get("rotation", 0),
+                    fontfamily=ann.get("font_family") or None,
+                    fontweight="bold" if ann.get("bold") else "normal",
+                    fontstyle="italic" if ann.get("italic") else "normal",
+                    ha=ann.get("alignment", "left"), rotation_mode="anchor",
+                    bbox=box, clip_on=ann.get("clip", False),
+                    parse_math=ann.get("parse_math", True), zorder=6,
+                )
+                self.annotation_artists.append((ann, artist))
 
             elif atype == "ref_line":
                 val = ann.get("value", 0.0)
@@ -586,10 +606,10 @@ class PlotManager:
                 color = ann.get("color", "#d62728")
                 style = ann.get("style", "--")
                 label = ann.get("label", "")
-                if orient == "h":
-                    self.ax.axhline(val, color=color, linestyle=style, linewidth=1.2, label=label, zorder=2)
-                else:
-                    self.ax.axvline(val, color=color, linestyle=style, linewidth=1.2, label=label, zorder=2)
+                ax = self.annotation_axes(ann)
+                line = ax.axhline if orient == "h" else ax.axvline
+                line(val, color=theme.get("axes.labelcolor", "#202b40") if color == "auto" else color,
+                     linestyle=style, linewidth=1.2, label=label, zorder=2)
 
             elif atype == "band":
                 xs = np.array(ann.get("x_data", []))

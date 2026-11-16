@@ -44,6 +44,9 @@ Linux, phones, tablets, and Chromebooks do not currently have supported installe
 - Fit linear, polynomial, Gaussian, exponential, Hill dose-response, and other models.
 - Find peaks, integrate signals, smooth data, calculate derivatives, and run statistics.
 - Style figures with scientific publication themes and export PNG, PDF, SVG, and TIFF.
+- Add chart notes with **Annotate → Add text note**, then click the plot to place them.
+  Double-click a note to change its text, rotation, size, or colors. Drag it to move it.
+  Undo and Redo restore annotation changes on the chart.
 - Save your workspace as a `.kgraph` project and reopen it later.
 
 ## Updates

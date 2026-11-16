@@ -3,6 +3,8 @@ High-performance Qt Figure Canvas for interactive scientific plotting.
 Integrates Matplotlib with PyQt6, custom mouse navigation, and tool switching.
 """
 
+import numpy as np
+
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSizePolicy, QInputDialog
 from PyQt6.QtCore import Qt, pyqtSignal
 from omnigraph.worksheet_drag import WorksheetDragData
@@ -25,6 +27,11 @@ class OmniCanvas(QWidget):
     files_dropped = pyqtSignal(list, str)  # file paths, optional layout
     point_mask_toggled = pyqtSignal(str, int)  # curve_label, row_idx
     request_significance_bracket = pyqtSignal(float, float, float)  # x1, x2, y
+    request_text_note = pyqtSignal(object)
+    request_annotation_edit = pyqtSignal(object)
+    request_annotation_remove = pyqtSignal(object)
+    annotation_moved = pyqtSignal(object, float, float)
+    note_placement_changed = pyqtSignal(bool)
 
     def __init__(self, graph_model: GraphModel, project: Project, parent=None):
         super().__init__(parent)
@@ -33,6 +40,8 @@ class OmniCanvas(QWidget):
         self._last_mouse_data = None
         self._last_inspected = None
         self._drop_picker = None
+        self._placing_note = False
+        self._note_drag = None
 
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setAcceptDrops(True)
@@ -56,6 +65,7 @@ class OmniCanvas(QWidget):
         # Wire events
         self.canvas.mpl_connect("motion_notify_event", self._on_motion)
         self.canvas.mpl_connect("button_press_event", self._on_canvas_click)
+        self.canvas.mpl_connect("button_release_event", self._finish_note_drag)
         self.tool_manager.point_inspected.connect(self._on_point_inspected)
         self.tool_manager.range_selected.connect(self.range_selected)
 
@@ -64,6 +74,10 @@ class OmniCanvas(QWidget):
         self.shortcut_mask = QShortcut(QKeySequence(Qt.Key.Key_M), self)
         self.shortcut_mask.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self.shortcut_mask.activated.connect(self._toggle_mask_at_cursor)
+        self.cancel_note_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self.canvas)
+        self.cancel_note_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+        self.cancel_note_shortcut.setEnabled(False)
+        self.cancel_note_shortcut.activated.connect(self.cancel_note_placement)
 
         # Initial render
         self.refresh()
@@ -153,6 +167,7 @@ class OmniCanvas(QWidget):
 
     def refresh(self):
         """Re-render graph from model."""
+        self._note_drag = None
         self.plot_manager.render()
         self.toolbar.update()
         self.tool_manager.ax = self.plot_manager.ax
@@ -162,17 +177,104 @@ class OmniCanvas(QWidget):
 
     def set_tool(self, tool_name: str):
         """Switch canvas tool ('pointer', 'data_reader', 'range_selector')."""
+        self.cancel_note_placement()
         self.tool_manager.set_tool(tool_name)
 
+    def hideEvent(self, event):
+        self.cancel_note_placement()
+        super().hideEvent(event)
+
+    def start_note_placement(self):
+        if self.toolbar.mode.name == "PAN":
+            self.toolbar.pan()
+        elif self.toolbar.mode.name == "ZOOM":
+            self.toolbar.zoom()
+        self._placing_note = True
+        self.cancel_note_shortcut.setEnabled(True)
+        self.canvas.setCursor(Qt.CursorShape.CrossCursor)
+        self.canvas.setFocus()
+        self.note_placement_changed.emit(True)
+
+    def cancel_note_placement(self):
+        if self._placing_note:
+            self._placing_note = False
+            self.cancel_note_shortcut.setEnabled(False)
+            self.canvas.unsetCursor()
+            self.note_placement_changed.emit(False)
+
+    def _note_location(self, event):
+        axes = self.plot_manager.axes
+        secondary = event.inaxes is self.plot_manager.ax2
+        return {"type": "text", "x": float(event.xdata), "y": float(event.ydata),
+                "panel": axes.index(event.inaxes) if not secondary else 0,
+                "axis": "secondary" if secondary else "primary", "clip": True}
+
+    def _note_at(self, event):
+        if event.x is None or event.y is None:
+            return None
+        renderer = self.canvas.get_renderer()
+        for annotation, artist in reversed(self.plot_manager.annotation_artists):
+            if artist.get_clip_on() and not artist.axes.bbox.contains(event.x, event.y):
+                continue
+            if artist.get_window_extent(renderer).padded(4).contains(event.x, event.y):
+                return annotation, artist
+        return None
+
+    def _move_note_preview(self, event):
+        if self._note_drag is None or event.x is None or event.y is None:
+            return
+        annotation, artist, start = self._note_drag
+        dx, dy = event.x - start[0], event.y - start[1]
+        if dx * dx + dy * dy < 16:
+            artist.set_position((annotation.get("x", 0.5), annotation.get("y", 0.5)))
+        else:
+            ax = artist.axes
+            pixel_x, pixel_y = ax.transData.transform((annotation.get("x", 0.5), annotation.get("y", 0.5)))
+            bounds = ax.bbox
+            point = (np.clip(pixel_x + dx, bounds.x0, bounds.x1),
+                     np.clip(pixel_y + dy, bounds.y0, bounds.y1))
+            position = ax.transData.inverted().transform(point)
+            if np.isfinite(position).all():
+                artist.set_position(position)
+        self.canvas.draw_idle()
+
+    def _finish_note_drag(self, event):
+        if self._note_drag is None or event.button != 1:
+            return
+        self._move_note_preview(event)
+        annotation, artist, _ = self._note_drag
+        self._note_drag = None
+        x, y = (float(value) for value in artist.get_position())
+        if (x, y) != (annotation.get("x", 0.5), annotation.get("y", 0.5)):
+            self.annotation_moved.emit(annotation, x, y)
+
     def _on_motion(self, event):
+        self._move_note_preview(event)
         if event.inaxes and event.xdata is not None and event.ydata is not None:
             self._last_mouse_data = (float(event.xdata), float(event.ydata))
             self.coordinates_changed.emit(float(event.xdata), float(event.ydata))
 
     def _on_canvas_click(self, event):
         """Direct in-place double-click label editing, right-click context menu, and legend detection."""
+        inside = event.inaxes is not None and event.xdata is not None and event.ydata is not None
+        if self._placing_note:
+            if event.button == 1 and inside:
+                self.cancel_note_placement()
+                self.request_text_note.emit(self._note_location(event))
+            elif event.button == 3:
+                self.cancel_note_placement()
+            return
+        if event.button == 1 and not self.toolbar.mode and self.tool_manager.current_tool == "pointer":
+            note = self._note_at(event)
+            if note is not None:
+                annotation, artist = note
+                if event.dblclick:
+                    self.request_annotation_edit.emit(annotation)
+                else:
+                    self._note_drag = (annotation, artist, (event.x, event.y))
+                return
         # Handle Right-Click (Button 3) Context Menu
-        if event.button == 3 and event.inaxes and event.xdata is not None and event.ydata is not None:
+        if event.button == 3 and inside:
             self._show_canvas_context_menu(event)
             return
 
@@ -358,6 +460,15 @@ class OmniCanvas(QWidget):
         from PyQt6.QtWidgets import QMenu
         from PyQt6.QtGui import QCursor
         menu = QMenu(self)
+
+        note = self._note_at(event)
+        if note is not None:
+            annotation, _ = note
+            menu.addAction("Edit text note…", lambda: self.request_annotation_edit.emit(annotation))
+            menu.addAction("Remove text note", lambda: self.request_annotation_remove.emit(annotation))
+        else:
+            menu.addAction("Add text note here…", lambda: self.request_text_note.emit(self._note_location(event)))
+        menu.addSeparator()
 
         pt = self.tool_manager.find_nearest_point(event.xdata, event.ydata)
         if pt:

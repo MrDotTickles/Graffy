@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QStatusBar, QApplication, QWidget, QSizePolicy, QStackedWidget, QVBoxLayout, QPushButton, QComboBox, QHBoxLayout
 )
 from PyQt6.QtCore import Qt, pyqtSlot, QSize, QSettings, QLockFile, QStandardPaths, QTimer, QSignalBlocker
-from PyQt6.QtGui import QAction, QKeySequence, QIcon, QShortcut, QPalette, QColor
+from PyQt6.QtGui import QAction, QKeySequence, QIcon, QShortcut, QPalette, QColor, QUndoStack
 
 from omnigraph.core.project import Project, GraphModel, CurveModel, ReportModel
 from omnigraph.core.worksheet import Workbook, Worksheet, Column, ColumnRole
@@ -48,6 +48,7 @@ class MainWindow(QMainWindow):
 
         # Tab views mapping: tab_widget -> ('sheet'|'graph'|'report', item_id)
         self.tab_metadata: Dict[int, tuple] = {}
+        self._chart_undo_stacks = {}
 
         self.setWindowTitle(f"Graffy - {self.project.name}")
         self.resize(1300, 850)
@@ -935,6 +936,8 @@ class MainWindow(QMainWindow):
         self.tab_metadata.clear()
         self._last_active_sheet_widget = None
         self._last_active_graph_widget = None
+        for graph in self._chart_undo_stacks.keys() - set(self.project.graphs):
+            self._chart_undo_stacks.pop(graph).deleteLater()
         for view in old_views:
             view.hide()
             view.deleteLater()
@@ -1018,7 +1021,13 @@ class MainWindow(QMainWindow):
             self._show_import_dialog(initial_filepaths=paths, target_graph=target, drop_layout=choice)
 
     def _add_graph_view(self, graph):
-        gw = GraphViewWidget(graph, self.project, self)
+        undo_stack = self._chart_undo_stacks.get(graph)
+        if undo_stack is None:
+            undo_stack = QUndoStack(self)
+            undo_stack.canUndoChanged.connect(self._update_undo_redo_actions)
+            undo_stack.canRedoChanged.connect(self._update_undo_redo_actions)
+            self._chart_undo_stacks[graph] = undo_stack
+        gw = GraphViewWidget(graph, self.project, self, undo_stack=undo_stack)
         gw.coordinates_changed.connect(self._on_mouse_coords)
         gw.request_curve_fit.connect(self.open_fit_wizard)
         gw.labels_changed.connect(self._on_graph_labels_changed)
@@ -1394,6 +1403,8 @@ class MainWindow(QMainWindow):
                 ("Set axis bounds…", "range minimum maximum limits x y", graph.canvas_widget.edit_axis_bounds),
                 ("Edit chart labels…", "title x y axis", self.open_quick_labels_dialog),
                 ("Edit series and legend…", "colors labels key", graph._open_legend_editor),
+                ("Add text note", "annotation label text", graph._add_text_annotation),
+                ("Manage annotations…", "text note line edit remove", graph._manage_annotations),
                 ("Choose columns to add…", "worksheet layer data series plot", self.open_add_layer_dialog),
                 ("Save chart setup…", "style template preset reuse", lambda: self.save_chart_setup(graph.graph_model)),
                 ("Export chart…", "save image png pdf svg", self.export_active_graph),
@@ -2000,60 +2011,48 @@ class MainWindow(QMainWindow):
             sw.set_selected_column_role(role)
             self._update_undo_redo_actions()
 
+    def _active_undo_view(self):
+        view = self.center_tabs.currentWidget()
+        if isinstance(view, GraphViewWidget) and view.undo_stack.count():
+            return view
+        return self.get_active_spreadsheet_widget()
+
     def undo_action(self, *args):
-        sw = self.get_active_spreadsheet_widget()
-        if sw:
-            if sw.undo_stack.canUndo():
-                desc = sw.undo_stack.undoText()
-                sw.undo()
-                self._update_undo_redo_actions()
-                self.status_bar.showMessage(f"Undid: {desc}", 3000)
-            else:
-                self.status_bar.showMessage("Nothing to undo.", 2000)
-        else:
+        view = self._active_undo_view()
+        if view is None or not view.undo_stack.canUndo():
             self.status_bar.showMessage("Nothing to undo.", 2000)
+            return
+        description = view.undo_stack.undoText()
+        view.undo()
+        self._update_undo_redo_actions()
+        self.status_bar.showMessage(f"Undid: {description}", 3000)
 
     def redo_action(self, *args):
-        sw = self.get_active_spreadsheet_widget()
-        if sw:
-            if sw.undo_stack.canRedo():
-                desc = sw.undo_stack.redoText()
-                sw.redo()
-                self._update_undo_redo_actions()
-                self.status_bar.showMessage(f"Redid: {desc}", 3000)
-            else:
-                self.status_bar.showMessage("Nothing to redo.", 2000)
-        else:
+        view = self._active_undo_view()
+        if view is None or not view.undo_stack.canRedo():
             self.status_bar.showMessage("Nothing to redo.", 2000)
+            return
+        description = view.undo_stack.redoText()
+        view.redo()
+        self._update_undo_redo_actions()
+        self.status_bar.showMessage(f"Redid: {description}", 3000)
 
     def _update_undo_redo_actions(self, *args):
-        sw = self.get_active_spreadsheet_widget()
-        if sw and hasattr(sw, "undo_stack") and sw.undo_stack:
-            can_u = sw.undo_stack.canUndo()
-            can_r = sw.undo_stack.canRedo()
-            u_text = f"Undo: {sw.undo_stack.undoText()} (Ctrl+Z)" if can_u else "Undo (Ctrl+Z)"
-            r_text = f"Redo: {sw.undo_stack.redoText()} (Ctrl+Y)" if can_r else "Redo (Ctrl+Y)"
-            if hasattr(self, "btn_undo"):
-                self.btn_undo.setEnabled(can_u)
-                self.btn_undo.setToolTip(u_text)
-            if hasattr(self, "btn_redo"):
-                self.btn_redo.setEnabled(can_r)
-                self.btn_redo.setToolTip(r_text)
-            if hasattr(self, "act_undo"):
-                self.act_undo.setEnabled(can_u)
-            if hasattr(self, "act_redo"):
-                self.act_redo.setEnabled(can_r)
-        else:
-            if hasattr(self, "btn_undo"):
-                self.btn_undo.setEnabled(False)
-                self.btn_undo.setToolTip("Undo (Ctrl+Z)")
-            if hasattr(self, "btn_redo"):
-                self.btn_redo.setEnabled(False)
-                self.btn_redo.setToolTip("Redo (Ctrl+Y)")
-            if hasattr(self, "act_undo"):
-                self.act_undo.setEnabled(False)
-            if hasattr(self, "act_redo"):
-                self.act_redo.setEnabled(False)
+        view = self._active_undo_view()
+        stack = view.undo_stack if view is not None else None
+        for action, button, enabled, description, shortcut in (
+            ("act_undo", "btn_undo", bool(stack and stack.canUndo()), stack.undoText() if stack else "", "Ctrl+Z"),
+            ("act_redo", "btn_redo", bool(stack and stack.canRedo()), stack.redoText() if stack else "", "Ctrl+Y"),
+        ):
+            label = "Undo" if action == "act_undo" else "Redo"
+            if description:
+                label = f"{label}: {description}"
+            if hasattr(self, button):
+                control = getattr(self, button)
+                control.setEnabled(enabled)
+                control.setToolTip(f"{label} ({shortcut})")
+            if hasattr(self, action):
+                getattr(self, action).setEnabled(enabled)
 
     def set_interface_scale(self,scale,persist=True):
         self.interface_scale=round(max(.8,min(2.0,float(scale))),2)
@@ -2483,9 +2482,14 @@ class MainWindow(QMainWindow):
 
     def open_peak_analysis_wizard(self):
         report_count = len(self.project.reports)
-        dlg = PeakAnalysisDialog(project=self.project, active_graph=self.get_active_graph(), parent=self,
+        graph = self.get_active_graph()
+        view = self.get_active_graph_widget()
+        before = {id(annotation) for annotation in graph.annotations} if graph else set()
+        dlg = PeakAnalysisDialog(project=self.project, active_graph=graph, parent=self,
                                  active_worksheet=self.get_active_worksheet())
         if dlg.exec():
+            if view is not None and view.graph_model is graph:
+                view.record_added_peak_notes(before)
             self._show_analysis_result(report_count)
 
     def open_smoothing_dialog(self):

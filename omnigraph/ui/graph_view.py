@@ -9,10 +9,11 @@ from PyQt6.QtWidgets import (
     QLineEdit, QScrollArea, QSizePolicy, QSplitter, QFormLayout, QTabWidget, QCheckBox, QDoubleSpinBox
 )
 from PyQt6.QtCore import pyqtSignal, Qt, QPoint, QRect
-from PyQt6.QtGui import QAction, QKeySequence, QShortcut
+from PyQt6.QtGui import QAction, QKeySequence, QShortcut, QUndoStack
 
 from omnigraph.core.project import CurveModel, GraphModel, Project
 from omnigraph.core.chart_drop import worksheet_curves
+from omnigraph.core.undo_manager import AnnotationCommand
 from omnigraph.graphing.canvas import OmniCanvas
 from omnigraph.graphing.themes import THEMES
 from omnigraph.core.plot_editing import PLOT_CHOICES, PLOT_GROUPS, axis_family, change_graph_plot_type
@@ -32,13 +33,15 @@ class GraphViewWidget(QWidget):
     request_jump_to_sheet = pyqtSignal(str, str)  # (sheet_name, workbook_name)
     request_replace_data = pyqtSignal(bool)  # duplicate first
 
-    def __init__(self, graph_model: GraphModel, project: Project, parent=None):
+    def __init__(self, graph_model: GraphModel, project: Project, parent=None, *, undo_stack=None):
         super().__init__(parent)
         self.graph_model = graph_model
         self.project = project
         self._interface_scale = 1.0
+        self.undo_stack = undo_stack if undo_stack is not None else QUndoStack(self)
 
         self._init_ui()
+        self.undo_stack.indexChanged.connect(self.canvas_widget.refresh)
 
     def minimumSizeHint(self):
         from PyQt6.QtCore import QSize
@@ -69,34 +72,6 @@ class GraphViewWidget(QWidget):
 
         bar.addSeparator()
 
-        # Interactive Tools
-        lbl_tl = QLabel("Tool:")
-        lbl_tl.setStyleSheet("font-weight: 600; padding-right: 2px;")
-        bar.addWidget(lbl_tl)
-
-        self.btn_pointer = QToolButton()
-        self.btn_pointer.setText("Pointer")
-        self.btn_pointer.setCheckable(True)
-        self.btn_pointer.setChecked(True)
-        self.btn_pointer.clicked.connect(lambda: self._select_tool("pointer"))
-        bar.addWidget(self.btn_pointer)
-
-        self.btn_crosshair = QToolButton()
-        self.btn_crosshair.setText("Reader")
-        self.btn_crosshair.setToolTip("Data Reader Crosshair: Inspect data curve values in real time")
-        self.btn_crosshair.setCheckable(True)
-        self.btn_crosshair.clicked.connect(lambda: self._select_tool("data_reader"))
-        bar.addWidget(self.btn_crosshair)
-
-        self.btn_range = QToolButton()
-        self.btn_range.setText("ROI")
-        self.btn_range.setToolTip("ROI Range: Select Region of Interest on X axis for fitting/integration")
-        self.btn_range.setCheckable(True)
-        self.btn_range.clicked.connect(lambda: self._select_tool("range_selector"))
-        bar.addWidget(self.btn_range)
-
-        bar.addSeparator()
-
         # Key / Legend Button with quick menu
         btn_key = QToolButton()
         self.legend_menu_button = btn_key
@@ -109,15 +84,21 @@ class GraphViewWidget(QWidget):
         # Add Annotation Dropdown
         btn_ann = QToolButton()
         self.annotation_menu_button = btn_ann
-        btn_ann.setText("Add annotation")
-        btn_ann.setToolTip("Add text note, reference lines, or significance brackets")
+        btn_ann.setText("Annotate")
+        btn_ann.setIcon(icon("edit"))
+        btn_ann.setToolTip("Add or manage chart annotations")
+        btn_ann.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         btn_ann.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         ann_menu = QMenu(btn_ann)
-        ann_menu.addAction("⭐ Add Significance Bracket (*, **, ns)...", self._prompt_significance_bracket)
+        ann_menu.addAction("Add text note", self._add_text_annotation)
+        ann_menu.addAction("Horizontal reference line…", self._add_ref_line_h)
+        ann_menu.addAction("Vertical reference line…", self._add_ref_line_v)
+        ann_menu.addAction("Significance bracket…", self._prompt_significance_bracket)
         ann_menu.addSeparator()
-        ann_menu.addAction("Add Text Note...", self._add_text_annotation)
-        ann_menu.addAction("Add Horizontal Reference Line (y = c)...", self._add_ref_line_h)
-        ann_menu.addAction("Add Vertical Reference Line (x = c)...", self._add_ref_line_v)
+        manage = ann_menu.addAction("Manage annotations…", self._manage_annotations)
+        ann_menu.aboutToShow.connect(lambda: manage.setEnabled(
+            any(ann.get("type") != "band" for ann in self.graph_model.annotations)
+        ))
         btn_ann.setMenu(ann_menu)
 
         from PyQt6.QtWidgets import QSizePolicy
@@ -227,6 +208,11 @@ class GraphViewWidget(QWidget):
         self.canvas_widget.worksheet_dropped.connect(self._on_worksheet_dropped, Qt.ConnectionType.QueuedConnection)
         self.canvas_widget.point_mask_toggled.connect(self._on_point_mask_toggled)
         self.canvas_widget.request_significance_bracket.connect(self._prompt_significance_bracket)
+        self.canvas_widget.request_text_note.connect(self._place_text_note)
+        self.canvas_widget.request_annotation_edit.connect(self._edit_annotation)
+        self.canvas_widget.request_annotation_remove.connect(self._remove_annotation)
+        self.canvas_widget.annotation_moved.connect(self._move_annotation)
+        self.canvas_widget.note_placement_changed.connect(self._note_placement_hint)
         layout.addWidget(self.canvas_widget)
 
         # Wire Ctrl+C shortcut to copy graph when focused on graph tab
@@ -335,6 +321,7 @@ class GraphViewWidget(QWidget):
         data_menu.aboutToShow.connect(update_data_menu)
         data_button.setMenu(data_menu)
         self.chart_toolbar.addWidget(data_button)
+        self.chart_toolbar.addWidget(self.annotation_menu_button)
         self.chart_toolbar.addWidget(self.edit_chart_button)
         self.chart_toolbar.addWidget(self.change_plot_button)
         self.legend_action = self.chart_toolbar.addAction(icon("legend"), "Legend…", self._open_legend_editor)
@@ -360,7 +347,8 @@ class GraphViewWidget(QWidget):
         self.chart_toolbar.addWidget(spacer)
         copy_action = self.chart_toolbar.addAction(icon("copy"), "Copy graph", self._copy_to_clipboard)
         self._chart_toolbar_buttons = (
-            self.chart_toolbar.widgetForAction(bounds_action), data_button, self.edit_chart_button,
+            self.chart_toolbar.widgetForAction(bounds_action), data_button, self.annotation_menu_button,
+            self.edit_chart_button,
             self.change_plot_button, self.chart_toolbar.widgetForAction(self.legend_action),
             navigation, self.chart_toolbar.widgetForAction(copy_action),
         )
@@ -433,7 +421,6 @@ class GraphViewWidget(QWidget):
         wf.addRow(note)
         style_layout.addWidget(self.waterfall_controls)
         style_layout.addWidget(self.legend_menu_button)
-        style_layout.addWidget(self.annotation_menu_button)
         style_layout.addStretch()
         self.editor_tabs.addTab(style,"Style")
         from omnigraph.ui.series_editor import SeriesEditor
@@ -748,54 +735,74 @@ class GraphViewWidget(QWidget):
         self.labels_changed.emit()
 
     def _select_tool(self, tool_name: str):
-        self.btn_pointer.setChecked(tool_name == "pointer")
-        self.btn_crosshair.setChecked(tool_name == "data_reader")
-        self.btn_range.setChecked(tool_name == "range_selector")
         self.canvas_widget.set_tool(tool_name)
 
+    def undo(self):
+        self.undo_stack.undo()
+
+    def redo(self):
+        self.undo_stack.redo()
+
+    def _note_placement_hint(self, active):
+        window = self.window()
+        if hasattr(window, "statusBar"):
+            status = window.statusBar()
+            if active:
+                status.showMessage("Click the plot to place a text note. Press Esc to cancel.")
+            else:
+                status.clearMessage()
+
     def _add_text_annotation(self):
-        text, ok = QInputDialog.getText(self, "Add Text Annotation", "Enter annotation text:")
-        if ok and text:
-            # Place in center of current axes
-            xlim = self.canvas_widget.plot_manager.ax.get_xlim()
-            ylim = self.canvas_widget.plot_manager.ax.get_ylim()
-            cx = (xlim[0] + xlim[1]) / 2.0
-            cy = (ylim[0] + ylim[1]) / 2.0
-            self.graph_model.annotations.append({
-                "type": "text",
-                "x": cx,
-                "y": cy,
-                "text": text,
-                "color": "#000000" if self.graph_model.theme != "Modern Dark" else "#ffffff",
-                "font_size": 10,
-            })
-            self.refresh_plot()
+        self._select_tool("pointer")
+        self.canvas_widget.start_note_placement()
+
+    def _place_text_note(self, annotation):
+        self._open_annotation_editor(annotation, adding=True)
+
+    def _edit_annotation(self, annotation):
+        self._open_annotation_editor(annotation)
+
+    def _open_annotation_editor(self, annotation, *, adding=False):
+        from omnigraph.ui.dialogs.annotation_dialog import AnnotationDialog
+
+        self.canvas_widget.cancel_note_placement()
+        dialog = AnnotationDialog(annotation, self, adding=adding)
+        if dialog.exec() and dialog.result_annotation is not None:
+            kind = "text note" if annotation["type"] == "text" else "reference line"
+            action = f"{'Add' if adding else 'Edit'} {kind}"
+            self._change_annotation(annotation, None if adding else annotation, dialog.result_annotation, action)
+
+    def _change_annotation(self, annotation, before, after, action):
+        if before != after:
+            self.undo_stack.push(AnnotationCommand(self.graph_model, annotation, before, after, action))
+
+    def _remove_annotation(self, annotation):
+        self._change_annotation(annotation, annotation, None, "Remove annotation")
+
+    def _move_annotation(self, annotation, x, y):
+        self._change_annotation(annotation, annotation, {**annotation, "x": x, "y": y}, "Move text note")
+
+    def record_added_peak_notes(self, before):
+        added = [note for note in self.graph_model.annotations
+                 if note.get("type") == "text" and id(note) not in before]
+        if not added:
+            return
+        self.undo_stack.beginMacro("Add peak notes")
+        for note in added:
+            self._change_annotation(note, None, note, "Add peak note")
+        self.undo_stack.endMacro()
+
+    def _manage_annotations(self):
+        from omnigraph.ui.dialogs.annotation_dialog import AnnotationListDialog
+
+        self.canvas_widget.cancel_note_placement()
+        AnnotationListDialog(self.graph_model, self._edit_annotation, self._remove_annotation, self).exec()
 
     def _add_ref_line_h(self):
-        val, ok = QInputDialog.getDouble(self, "Horizontal Reference Line", "Enter Y value:", 0.0, -1e9, 1e9, 4)
-        if ok:
-            self.graph_model.annotations.append({
-                "type": "ref_line",
-                "orientation": "h",
-                "value": val,
-                "color": "#d62728",
-                "style": "--",
-                "label": f"y = {val:.4g}",
-            })
-            self.refresh_plot()
+        self._open_annotation_editor({"type": "ref_line", "orientation": "h", "color": "#d62728"}, adding=True)
 
     def _add_ref_line_v(self):
-        val, ok = QInputDialog.getDouble(self, "Vertical Reference Line", "Enter X value:", 0.0, -1e9, 1e9, 4)
-        if ok:
-            self.graph_model.annotations.append({
-                "type": "ref_line",
-                "orientation": "v",
-                "value": val,
-                "color": "#1f77b4",
-                "style": "--",
-                "label": f"x = {val:.4g}",
-            })
-            self.refresh_plot()
+        self._open_annotation_editor({"type": "ref_line", "orientation": "v", "color": "#1f77b4"}, adding=True)
 
     def _copy_to_clipboard(self):
         success = self.canvas_widget.copy_to_clipboard(width_in=7.0, height_in=5.0, dpi=300)
@@ -918,9 +925,7 @@ class GraphViewWidget(QWidget):
             x1=x1, x2=x2, y=y, custom_text=label_clean, h=tick_h,
             color="#000000" if self.graph_model.theme != "Modern Dark" else "#ffffff"
         )
-        self.graph_model.annotations.append(bracket)
-        self.refresh_plot()
-        self.labels_changed.emit()
+        self._change_annotation(bracket, None, bracket, "Add significance bracket")
 
     def add_worksheet_series(self, workbook, sheet_name):
         """Link the worksheet's usable X/Y pairs to this chart."""

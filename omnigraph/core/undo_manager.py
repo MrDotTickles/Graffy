@@ -175,3 +175,35 @@ class WorksheetSnapshotCommand(QUndoCommand):
         self.worksheet.restore_from_dict(self.before_dict)
         if self.callback:
             self.callback()
+
+
+
+class AnnotationCommand(QUndoCommand):
+    """Change one annotation without overwriting other notes or analysis marks."""
+
+    def __init__(self, graph, annotation, before, after, label):
+        super().__init__(label)
+        self.graph = graph
+        self.annotation = annotation
+        self.before = copy.deepcopy(before)
+        self.after = copy.deepcopy(after)
+        self.position = next((i for i, item in enumerate(graph.annotations) if item is annotation),
+                             len(graph.annotations))
+
+    def _apply(self, state):
+        items = self.graph.annotations
+        position = next((i for i, item in enumerate(items) if item is self.annotation), None)
+        if state is None:
+            if position is not None:
+                del items[position]
+            return
+        self.annotation.clear()
+        self.annotation.update(copy.deepcopy(state))
+        if position is None:
+            items.insert(self.position, self.annotation)
+
+    def undo(self):
+        self._apply(self.before)
+
+    def redo(self):
+        self._apply(self.after)
