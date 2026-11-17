@@ -74,8 +74,8 @@ class AnnotationDialog(QDialog):
         self.text = NoteTextEdit()
         self.text.setPlaceholderText("Type or paste text")
         self.text.setAccessibleName("Note text")
-        self.text.setMinimumHeight(58)
-        self.text.setMaximumHeight(96)
+        self.text.setMinimumHeight(max(58, 2 * self.text.fontMetrics().height() + 14))
+        self.text.setMaximumHeight(max(96, self.text.minimumHeight()))
         self.text.setTabChangesFocus(True)
         if annotation.get("runs"):
             insert_runs(self.text.textCursor(), annotation["runs"])
@@ -124,10 +124,17 @@ class AnnotationDialog(QDialog):
         tools = QGridLayout()
         tools.setContentsMargins(0, 0, 0, 0)
         tools.setSpacing(4)
-        for column, widget in enumerate((self.bold, self.italic, self.size, self.rotation, options)):
-            tools.addWidget(widget, 0, column)
-        tools.setColumnStretch(5, 1)
-        tools.addWidget(self.color, 1, 0, 1, 6)
+        if self.fontMetrics().height() > 24:
+            tools.addWidget(self.bold, 0, 0)
+            tools.addWidget(self.italic, 0, 1)
+            tools.addWidget(options, 0, 2, 1, 2, Qt.AlignmentFlag.AlignLeft)
+            tools.addWidget(self.size, 1, 0, 1, 2)
+            tools.addWidget(self.rotation, 1, 2, 1, 2)
+            tools.addWidget(self.color, 2, 0, 1, 4)
+        else:
+            for column, widget in enumerate((self.bold, self.italic, self.size, self.rotation, options)):
+                tools.addWidget(widget, 0, column)
+            tools.addWidget(self.color, 1, 0, 1, 5)
         layout.addLayout(tools)
         layout.addWidget(self.text)
 

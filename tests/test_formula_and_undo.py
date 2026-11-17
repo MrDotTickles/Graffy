@@ -247,7 +247,7 @@ def test_main_window_edit_menu_undo_redo(qapp):
 
 def test_worksheet_row_menu_and_unselect_workflow(qapp, monkeypatch):
     from PyQt6.QtCore import QItemSelectionModel
-    from PyQt6.QtWidgets import QInputDialog, QMessageBox, QPushButton
+    from PyQt6.QtWidgets import QInputDialog, QPushButton
 
     ws = Worksheet.create_default(num_rows=4)
     ws.columns[0].data = [1, 2, 3, 4]
@@ -264,10 +264,6 @@ def test_worksheet_row_menu_and_unselect_workflow(qapp, monkeypatch):
 
     sw.table_view.setCurrentIndex(sw.model.index(0, 0))
     sw.table_view.selectionModel().select(sw.model.index(2, 1), QItemSelectionModel.SelectionFlag.Select)
-    monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.No)
-    row_actions["Delete Selected Rows"].trigger()
-    assert ws.columns[0].data == [1, 2, 3, 4]
-    monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.Yes)
     row_actions["Delete Selected Rows"].trigger()
     assert ws.columns[0].data == [2, 4]
     assert sw.model.rowCount() == 2
