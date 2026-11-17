@@ -52,13 +52,14 @@ class PlotManager:
     def recalculate_fits(self):
         """Automatically recalculates all fitted curves on the graph with current unmasked data."""
         from omnigraph.analysis.fitting import CurveFitter
-        for curve in self.model.curves:
-            if not getattr(curve, "is_fit_curve", False) or not getattr(curve, "fit_model_name", None):
+        fits = [curve for curve in self.model.curves if curve.is_fit_curve]
+        for curve in fits:
+            if not getattr(curve, "fit_model_name", None):
                 continue
 
             src_id = getattr(curve, "fit_source_curve_id", None)
             src_curve = next((c for c in self.model.curves if c.id == src_id), None)
-            if not src_curve:
+            if src_id is None:
                 src_curve = next((c for c in self.model.curves if not getattr(c, "is_fit_curve", False)), None)
             if not src_curve:
                 continue
@@ -94,12 +95,19 @@ class PlotManager:
                                 fit_ws.columns[2].data = res.x_orig.tolist()
                                 fit_ws.columns[3].data = res.residuals.tolist()
 
-                    if res.conf_band_lower is not None:
-                        for ann in self.model.annotations:
-                            if ann.get("type") == "band":
-                                ann["x_data"] = res.x_dense.tolist()
-                                ann["lower_data"] = res.conf_band_lower.tolist()
-                                ann["upper_data"] = res.conf_band_upper.tolist()
+                    for ann in self.model.annotations:
+                        if ann.get("type") != "band":
+                            continue
+                        linked = ann.get("fit_curve_id")
+                        if linked != curve.id and (linked or len(fits) != 1):
+                            continue
+                        if ann.get("band_kind") == "prediction":
+                            lower, upper = res.pred_band_lower, res.pred_band_upper
+                        else:
+                            lower, upper = res.conf_band_lower, res.conf_band_upper
+                        ann["x_data"] = res.x_dense.tolist() if lower is not None else []
+                        ann["lower_data"] = lower.tolist() if lower is not None else []
+                        ann["upper_data"] = upper.tolist() if upper is not None else []
             except Exception:
                 pass
 
@@ -107,6 +115,7 @@ class PlotManager:
         """Draws complete graph according to model."""
         self.fig.clear()
         self.rendered_curves.clear()
+        self.hover_curves = []
 
         # Recalculate any fitted curves so outliers excluded via masking automatically update fits
         self.recalculate_fits()
@@ -116,7 +125,11 @@ class PlotManager:
         is_grid_1x2 = layout_mode == "grid_1x2"
         comparison = is_grid_1x2 and self.model.comparison_panels
         is_grid_2x2 = layout_mode in ("grid_2x2", "figure_1")
-        has_secondary = (layout_mode in ("single","twin_x")) and any(c.axis == "secondary" for c in self.model.curves if getattr(c, "visible", True))
+        has_secondary = (layout_mode in ("single","twin_x")) and (
+            any(c.axis == "secondary" and c.visible for c in self.model.curves)
+            or any(a.get("axis") == "secondary" and a.get("type") == "band" and a.get("visible", True)
+                   for a in self.model.annotations)
+        )
 
         theme = THEMES.get(self.model.theme, THEMES["Origin Classic"])
         lbl_color = theme.get("axes.labelcolor", "#000000")
@@ -331,7 +344,24 @@ class PlotManager:
                 )
 
             g_pos = group_positions.get(curve.id)
-            PlotRenderer.render_curve(target_ax, render_curve, x_plot, y_plot, y_err_data, group_pos=g_pos)
+            collection_count = len(target_ax.collections)
+            rendered = PlotRenderer.render_curve(target_ax, render_curve, x_plot, y_plot, y_err_data, group_pos=g_pos)
+            hover_x, hover_y, rows = x_plot, y_plot, valid_indices
+            if g_pos is not None:
+                hover_x = np.full_like(y_plot, g_pos)
+                if curve.plot_type in {"jitter", "strip", "box_jitter", "violin_jitter"}:
+                    scatter = target_ax.collections[-1] if len(target_ax.collections) > collection_count else None
+                    if scatter is not None and len(scatter.get_offsets()) == len(y_plot):
+                        hover_x = np.asarray(scatter.get_offsets()[:, 0])
+            if curve.plot_type == "hbar":
+                hover_x, hover_y = y_plot, x_plot
+            elif curve.plot_type == "histogram":
+                hover_x = [bar.get_x() + bar.get_width() / 2 for bar in rendered or ()]
+                hover_y = [bar.get_height() for bar in rendered or ()]
+                rows = None
+            if curve.is_fit_curve:
+                rows = None
+            self.hover_curves.append((target_ax, curve.label, hover_x, hover_y, rows))
             # Store RenderedCurve (3-tuple unpackable, with row_indices and is_masked)
             self.rendered_curves.append(RenderedCurve(curve.label, x_plot, y_plot, valid_indices, False))
 
@@ -349,6 +379,7 @@ class PlotManager:
                     label="_nolegend_",
                 )
                 self.rendered_curves.append(RenderedCurve(curve.label, x_m + x_off, y_m + y_off, m_indices, True))
+                self.hover_curves.append((target_ax, curve.label, x_m + x_off, y_m + y_off, m_indices))
 
             visible_idx += 1
 
@@ -579,6 +610,8 @@ class PlotManager:
         self.annotation_artists = []
         theme = THEMES.get(self.model.theme, THEMES["Origin Classic"])
         for ann in self.model.annotations:
+            if not ann.get("visible", True):
+                continue
             atype = ann.get("type")
             if atype == "text":
                 ax = self.annotation_axes(ann)
@@ -587,8 +620,8 @@ class PlotManager:
                 if background == "auto":
                     background = theme.get("axes.facecolor", "#ffffff")
                 box = {"boxstyle": "round,pad=0.24", "facecolor": background, "edgecolor": "none"} if background != "none" else None
-                artist = ax.text(
-                    ann.get("x", 0.5), ann.get("y", 0.5), ann.get("text", ""),
+                properties = dict(
+                    x=ann.get("x", 0.5), y=ann.get("y", 0.5), text=ann.get("text", ""),
                     color=theme.get("axes.labelcolor", "#202b40") if color == "auto" else color,
                     fontsize=ann.get("font_size", 10), rotation=ann.get("rotation", 0),
                     fontfamily=ann.get("font_family") or None,
@@ -598,6 +631,15 @@ class PlotManager:
                     bbox=box, clip_on=ann.get("clip", False),
                     parse_math=ann.get("parse_math", True), zorder=6,
                 )
+                if ann.get("runs"):
+                    from omnigraph.graphing.rich_text import RichNoteArtist
+
+                    artist = RichNoteArtist(**properties, runs=ann["runs"])
+                    ax.add_artist(artist)
+                    if artist.get_clip_on():
+                        artist.set_clip_path(ax.patch)
+                else:
+                    artist = ax.text(s=properties.pop("text"), **properties)
                 self.annotation_artists.append((ann, artist))
 
             elif atype == "ref_line":
@@ -609,7 +651,7 @@ class PlotManager:
                 ax = self.annotation_axes(ann)
                 line = ax.axhline if orient == "h" else ax.axvline
                 line(val, color=theme.get("axes.labelcolor", "#202b40") if color == "auto" else color,
-                     linestyle=style, linewidth=1.2, label=label, zorder=2)
+                     linestyle=style, linewidth=ann.get("line_width", 1.2), label=label, zorder=2)
 
             elif atype == "band":
                 xs = np.array(ann.get("x_data", []))
@@ -619,7 +661,11 @@ class PlotManager:
                 alpha = ann.get("alpha", 0.2)
                 label = ann.get("label", "")
                 if len(xs) > 0 and len(low) == len(xs) and len(high) == len(xs):
-                    self.ax.fill_between(xs, low, high, color=color, alpha=alpha, label=label, zorder=1)
+                    if color == "auto":
+                        color = theme.get("axes.labelcolor", "#202b40")
+                    self.annotation_axes(ann).fill_between(
+                        xs, low, high, color=color, alpha=alpha, label=label, zorder=1,
+                    )
 
             elif atype in ("bracket", "significance"):
                 x1 = float(ann.get("x1", 1.0))
@@ -634,8 +680,11 @@ class PlotManager:
                 # Bracket shape: tick down at x1, horizontal bar to x2, tick down at x2
                 bx = [x1, x1, x2, x2]
                 by = [y - h, y, y, y - h]
-                self.ax.plot(bx, by, color=color, linewidth=lw, zorder=10)
-                self.ax.text(
+                ax = self.annotation_axes(ann)
+                if color == "auto":
+                    color = theme.get("axes.labelcolor", "#202b40")
+                ax.plot(bx, by, color=color, linewidth=lw, zorder=10)
+                ax.text(
                     (x1 + x2) / 2.0,
                     y + abs(h) * 0.15,
                     text,

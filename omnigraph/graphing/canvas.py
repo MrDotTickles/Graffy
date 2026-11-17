@@ -5,11 +5,14 @@ Integrates Matplotlib with PyQt6, custom mouse navigation, and tool switching.
 
 import numpy as np
 
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSizePolicy, QInputDialog
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSizePolicy, QInputDialog, QLabel
+from PyQt6.QtCore import Qt, QPoint, pyqtSignal
 from omnigraph.worksheet_drag import WorksheetDragData
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
+from matplotlib.lines import Line2D
+from matplotlib.transforms import IdentityTransform
+from scipy.spatial import cKDTree
 
 from omnigraph.graphing.plot_manager import PlotManager
 from omnigraph.graphing.tools import GraphToolManager
@@ -31,6 +34,8 @@ class OmniCanvas(QWidget):
     request_annotation_edit = pyqtSignal(object)
     request_annotation_remove = pyqtSignal(object)
     annotation_moved = pyqtSignal(object, float, float)
+    annotation_transformed = pyqtSignal(object, str, float)
+    request_manage_overlays = pyqtSignal()
     note_placement_changed = pyqtSignal(bool)
 
     def __init__(self, graph_model: GraphModel, project: Project, parent=None):
@@ -42,7 +47,8 @@ class OmniCanvas(QWidget):
         self._drop_picker = None
         self._placing_note = False
         self._note_drag = None
-
+        self._selected_note = None
+        self._hover_index = {}
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setAcceptDrops(True)
 
@@ -50,6 +56,17 @@ class OmniCanvas(QWidget):
         self.canvas = FigureCanvas(self.plot_manager.fig)
         self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
+        self._hover_label = QLabel(self.canvas)
+        self._hover_label.setTextFormat(Qt.TextFormat.PlainText)
+        self._hover_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._hover_label.setStyleSheet(
+            "background: #17233a; color: white; border-radius: 5px; padding: 5px 8px;"
+        )
+        self._hover_marker = QLabel(self.canvas)
+        self._hover_marker.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._hover_marker.setFixedSize(11, 11)
+        self._hover_marker.setStyleSheet("border: 2px solid #7c3aed; background: white; border-radius: 5px;")
+        self._clear_hover()
         self.toolbar = NavigationToolbar(self.canvas, self)
         self.toolbar.setIconSize(self.toolbar.iconSize())
 
@@ -64,6 +81,8 @@ class OmniCanvas(QWidget):
 
         # Wire events
         self.canvas.mpl_connect("motion_notify_event", self._on_motion)
+        self.canvas.mpl_connect("figure_leave_event", self._clear_hover)
+        self.canvas.mpl_connect("draw_event", self._draw_note_frame)
         self.canvas.mpl_connect("button_press_event", self._on_canvas_click)
         self.canvas.mpl_connect("button_release_event", self._finish_note_drag)
         self.tool_manager.point_inspected.connect(self._on_point_inspected)
@@ -168,7 +187,11 @@ class OmniCanvas(QWidget):
     def refresh(self):
         """Re-render graph from model."""
         self._note_drag = None
+        self._clear_hover()
+        self._hover_index.clear()
         self.plot_manager.render()
+        if not any(note is self._selected_note for note, _ in self.plot_manager.annotation_artists):
+            self._selected_note = None
         self.toolbar.update()
         self.tool_manager.ax = self.plot_manager.ax
         self.tool_manager.ax2 = self.plot_manager.ax2
@@ -178,6 +201,8 @@ class OmniCanvas(QWidget):
     def set_tool(self, tool_name: str):
         """Switch canvas tool ('pointer', 'data_reader', 'range_selector')."""
         self.cancel_note_placement()
+        self._clear_hover()
+        self._select_note(None)
         self.tool_manager.set_tool(tool_name)
 
     def hideEvent(self, event):
@@ -189,6 +214,8 @@ class OmniCanvas(QWidget):
             self.toolbar.pan()
         elif self.toolbar.mode.name == "ZOOM":
             self.toolbar.zoom()
+        self._clear_hover()
+        self._select_note(None)
         self._placing_note = True
         self.cancel_note_shortcut.setEnabled(True)
         self.canvas.setCursor(Qt.CursorShape.CrossCursor)
@@ -220,36 +247,159 @@ class OmniCanvas(QWidget):
                 return annotation, artist
         return None
 
+    def _select_note(self, note):
+        if self._selected_note is not note:
+            self._selected_note = note
+            self.canvas.draw_idle()
+
+    def _note_handles(self, renderer):
+        for annotation, artist in self.plot_manager.annotation_artists:
+            if annotation is self._selected_note:
+                box = artist.get_window_extent(renderer).padded(5 * self.canvas.device_pixel_ratio)
+                rotate = ((box.x0 + box.x1) / 2, box.y1 + 17 * self.canvas.device_pixel_ratio)
+                resize = (box.x1, box.y0)
+                return artist, box, rotate, resize
+        return None
+
+    def _draw_note_frame(self, event):
+        if event.canvas.is_saving() or self._selected_note is None or self.toolbar.mode:
+            return
+        handles = self._note_handles(event.renderer)
+        if handles is None:
+            return
+        _, box, rotate, resize = handles
+        artists = (
+            Line2D([box.x0, box.x1, box.x1, box.x0, box.x0],
+                   [box.y0, box.y0, box.y1, box.y1, box.y0], linewidth=0.9),
+            Line2D([rotate[0], rotate[0]], [box.y1, rotate[1]], linewidth=0.9),
+            Line2D([rotate[0]], [rotate[1]], marker="o", markersize=6, markerfacecolor="white"),
+            Line2D([resize[0]], [resize[1]], marker="s", markersize=6, markerfacecolor="white"),
+        )
+        for handle in artists:
+            handle.set_color("#7c3aed")
+            handle.set_markeredgecolor("#7c3aed")
+            handle.set_transform(IdentityTransform())
+            handle.set_figure(self.plot_manager.fig)
+            handle.draw(event.renderer)
+
+    def _handle_at(self, event):
+        if self._selected_note is None:
+            return None
+        handles = self._note_handles(self.canvas.get_renderer())
+        if handles is not None:
+            artist, _, rotate, resize = handles
+            point = np.array([event.x, event.y])
+            for mode, center in (("rotation", rotate), ("font_size", resize)):
+                if np.linalg.norm(point - center) <= 9 * self.canvas.device_pixel_ratio:
+                    return artist, mode
+        return None
+
     def _move_note_preview(self, event):
         if self._note_drag is None or event.x is None or event.y is None:
             return
-        annotation, artist, start = self._note_drag
-        dx, dy = event.x - start[0], event.y - start[1]
-        if dx * dx + dy * dy < 16:
-            artist.set_position((annotation.get("x", 0.5), annotation.get("y", 0.5)))
-        else:
-            ax = artist.axes
-            pixel_x, pixel_y = ax.transData.transform((annotation.get("x", 0.5), annotation.get("y", 0.5)))
+        annotation, artist, start, mode = self._note_drag
+        delta = np.array((event.x, event.y)) - start
+        moved = np.dot(delta, delta) >= 16
+        ax = artist.axes
+        anchor = ax.transData.transform((annotation.get("x", 0.5), annotation.get("y", 0.5)))
+        if mode == "rotation":
+            angle = annotation.get("rotation", 0)
+            if moved:
+                x, y = start - anchor
+                dx, dy = delta
+                angle += np.degrees(np.arctan2(y + dy, x + dx) - np.arctan2(y, x))
+            artist.set_rotation(angle)
+        elif mode == "font_size":
+            size = annotation.get("font_size", 10)
+            if moved:
+                distance = max(8, np.linalg.norm(start - anchor))
+                size = float(np.clip(size * max(8, np.linalg.norm(start + delta - anchor)) / distance, 4, 200))
+            artist.set_fontsize(size)
+        elif moved:
             bounds = ax.bbox
-            point = (np.clip(pixel_x + dx, bounds.x0, bounds.x1),
-                     np.clip(pixel_y + dy, bounds.y0, bounds.y1))
+            point = np.clip(anchor + delta, (bounds.x0, bounds.y0), (bounds.x1, bounds.y1))
             position = ax.transData.inverted().transform(point)
             if np.isfinite(position).all():
                 artist.set_position(position)
+        else:
+            artist.set_position((annotation.get("x", 0.5), annotation.get("y", 0.5)))
         self.canvas.draw_idle()
 
     def _finish_note_drag(self, event):
         if self._note_drag is None or event.button != 1:
             return
         self._move_note_preview(event)
-        annotation, artist, _ = self._note_drag
+        annotation, artist, start, mode = self._note_drag
         self._note_drag = None
+        if mode:
+            if np.linalg.norm(np.array((event.x, event.y)) - start) >= 4:
+                value = (artist.get_rotation() + 180) % 360 - 180 if mode == "rotation" else artist.get_fontsize()
+                self.annotation_transformed.emit(annotation, mode, round(value, 1))
+            return
         x, y = (float(value) for value in artist.get_position())
         if (x, y) != (annotation.get("x", 0.5), annotation.get("y", 0.5)):
             self.annotation_moved.emit(annotation, x, y)
 
+    def _clear_hover(self, event=None):
+        self._hover_label.hide()
+        self._hover_marker.hide()
+
+    def _hover_data(self, event):
+        if event.inaxes is None or self._placing_note or self._note_drag is not None or self.toolbar.mode:
+            self._clear_hover()
+            return
+        if self.tool_manager.current_tool != "pointer" or self._note_at(event) or self._handle_at(event):
+            self._clear_hover()
+            return
+
+        best = None
+        ratio = self.canvas.device_pixel_ratio
+        radius = 11 * ratio
+        for ax, label, xs, ys, rows in self.plot_manager.hover_curves:
+            if not ax.bbox.contains(event.x, event.y) or not len(xs):
+                continue
+            key = (ax.bbox.bounds, ax.get_xlim(), ax.get_ylim(), ax.get_xscale(), ax.get_yscale())
+            cache_key = (ax, id(xs), id(ys))
+            cached = self._hover_index.get(cache_key)
+            if cached is None or cached[0] != key:
+                pixels = ax.transData.transform(np.column_stack((xs, ys)))
+                visible = (np.isfinite(pixels).all(axis=1) & (pixels[:, 0] >= ax.bbox.x0)
+                           & (pixels[:, 0] <= ax.bbox.x1) & (pixels[:, 1] >= ax.bbox.y0)
+                           & (pixels[:, 1] <= ax.bbox.y1))
+                indexes = np.flatnonzero(visible)
+                cached = key, indexes, cKDTree(pixels[visible])
+                self._hover_index[cache_key] = cached
+            _, indexes, tree = cached
+            distance, index = tree.query((event.x, event.y), distance_upper_bound=radius)
+            if np.isfinite(distance):
+                radius = distance + 1e-9
+                data_index = indexes[index]
+                row = rows[data_index] if rows is not None else None
+                best = label, xs[data_index], ys[data_index], row, tree.data[index]
+        if best is None:
+            self._clear_hover()
+            return
+
+        label, x, y, row, pixel = best
+        px, py = int(pixel[0] / ratio), self.canvas.height() - int(pixel[1] / ratio)
+        short_label = label if len(label) <= 52 else label[:49] + "…"
+        description = f"{short_label}\nX {x:.6g}  ·  Y {y:.6g}"
+        if row is not None:
+            description += f"  ·  Row {row + 1}"
+        if self._hover_label.text() != description:
+            self._hover_label.setText(description)
+            self._hover_label.adjustSize()
+        self._hover_marker.move(px - 5, py - 5)
+        self._hover_marker.show()
+        width, height = self._hover_label.width(), self._hover_label.height()
+        left = px + 13 if px + 13 + width < self.canvas.width() else max(0, px - width - 13)
+        top = py - height - 10 if py >= height + 10 else py + 10
+        self._hover_label.move(left, top)
+        self._hover_label.show()
+
     def _on_motion(self, event):
         self._move_note_preview(event)
+        self._hover_data(event)
         if event.inaxes and event.xdata is not None and event.ydata is not None:
             self._last_mouse_data = (float(event.xdata), float(event.ydata))
             self.coordinates_changed.emit(float(event.xdata), float(event.ydata))
@@ -265,14 +415,22 @@ class OmniCanvas(QWidget):
                 self.cancel_note_placement()
             return
         if event.button == 1 and not self.toolbar.mode and self.tool_manager.current_tool == "pointer":
+            self._clear_hover()
+            handle = self._handle_at(event)
+            if handle is not None:
+                artist, mode = handle
+                self._note_drag = (self._selected_note, artist, np.array([event.x, event.y]), mode)
+                return
             note = self._note_at(event)
             if note is not None:
                 annotation, artist = note
+                self._select_note(annotation)
                 if event.dblclick:
                     self.request_annotation_edit.emit(annotation)
                 else:
-                    self._note_drag = (annotation, artist, (event.x, event.y))
+                    self._note_drag = (annotation, artist, np.array([event.x, event.y]), "")
                 return
+            self._select_note(None)
         # Handle Right-Click (Button 3) Context Menu
         if event.button == 3 and inside:
             self._show_canvas_context_menu(event)
@@ -488,6 +646,11 @@ class OmniCanvas(QWidget):
             )
         )
         menu.addSeparator()
+
+        if any(curve.is_fit_curve for curve in self.graph_model.curves) or any(
+            ann.get("type") in {"band", "bracket", "significance"} for ann in self.graph_model.annotations
+        ):
+            menu.addAction("Analysis overlays…", self.request_manage_overlays.emit)
 
         # Quick direct label edits
         lbl_menu = menu.addMenu("✏️ Edit Labels & Titles")

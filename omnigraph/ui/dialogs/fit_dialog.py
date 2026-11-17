@@ -152,9 +152,16 @@ class FitDialog(QDialog):
         self.chk_overlay_graph.setToolTip("Adding a curve also creates a worksheet with fitted values.")
         fl_out.addWidget(self.chk_overlay_graph)
 
-        self.chk_conf_band = QCheckBox("Draw 95% Confidence Band shading")
+        self.chk_fit_line = QCheckBox("Show best-fit line")
+        self.chk_fit_line.setChecked(True)
+        fl_out.addWidget(self.chk_fit_line)
+        self.chk_conf_band = QCheckBox("Show 95% confidence band")
         self.chk_conf_band.setChecked(True)
         fl_out.addWidget(self.chk_conf_band)
+        self.chk_pred_band = QCheckBox("Show 95% prediction band")
+        self.chk_pred_band.setToolTip("Available for linear fits.")
+        fl_out.addWidget(self.chk_pred_band)
+        self.combo_model.currentIndexChanged.connect(self._sync_fit_outputs)
 
         self.chk_create_report = QCheckBox("Generate scientific Fit Report tab")
         self.chk_create_report.setChecked(True)
@@ -235,7 +242,10 @@ class FitDialog(QDialog):
             self.chk_export_sheet.setChecked(True)
         if not self.chk_export_sheet.isChecked():
             self.chk_overlay_graph.setChecked(False)
-        self.chk_conf_band.setEnabled(self.chk_overlay_graph.isChecked())
+        on_chart = self.chk_overlay_graph.isChecked()
+        self.chk_fit_line.setEnabled(on_chart)
+        self.chk_conf_band.setEnabled(on_chart)
+        self.chk_pred_band.setEnabled(on_chart and self.combo_model.currentData() == "linear")
 
     def _clear_fit_preview(self):
         self.last_fit_result = None
@@ -367,7 +377,12 @@ class FitDialog(QDialog):
 
         # 1. Export fitted curve and residuals to a new Worksheet tab (like Origin's FitLinear1)
         if self.chk_export_sheet.isChecked() and wb:
-            fit_sheet_name = f"Fit_{res.model_name[:8]}_{len(wb.sheets)}"
+            number = len(wb.sheets)
+            existing_names = {item.name for item in wb.sheets}
+            fit_sheet_name = f"Fit_{res.model_name[:8]}_{number}"
+            while fit_sheet_name in existing_names:
+                number += 1
+                fit_sheet_name = f"Fit_{res.model_name[:8]}_{number}"
             fit_ws = Worksheet(name=fit_sheet_name)
             col_xf = Column(name="A", long_name="Fitted X", role=ColumnRole.X, data=res.x_dense.tolist())
             col_yf = Column(name="B", long_name="Fitted Y", role=ColumnRole.Y, data=res.y_dense.tolist())
@@ -407,20 +422,31 @@ class FitDialog(QDialog):
                     fit_model_name=model_code if live_fit else None,
                     fit_source_curve_id=src_id,
                     fit_degree=deg,
+                    visible=self.chk_fit_line.isChecked(),
+                    axis=src_curve.axis if src_curve else "primary",
+                    layer_index=src_curve.layer_index if src_curve else 0,
                 )
                 self.active_graph.add_curve(fit_curve)
 
-                # 95% Confidence Band overlay
-                if self.chk_conf_band.isChecked() and res.conf_band_lower is not None:
-                    self.active_graph.annotations.append({
-                        "type": "band",
-                        "x_data": res.x_dense.tolist(),
-                        "lower_data": res.conf_band_lower.tolist(),
-                        "upper_data": res.conf_band_upper.tolist(),
-                        "color": "#0284c7",
-                        "alpha": 0.18,
-                        "label": "95% Conf. Band",
-                    })
+                for kind, lower, upper, check, color in (
+                    ("confidence", res.conf_band_lower, res.conf_band_upper, self.chk_conf_band, "#0284c7"),
+                    ("prediction", res.pred_band_lower, res.pred_band_upper, self.chk_pred_band, "#818cf8"),
+                ):
+                    if lower is not None and upper is not None:
+                        self.active_graph.annotations.append({
+                            "type": "band",
+                            "band_kind": kind,
+                            "fit_curve_id": fit_curve.id,
+                            "x_data": res.x_dense.tolist(),
+                            "lower_data": lower.tolist(),
+                            "upper_data": upper.tolist(),
+                            "panel": fit_curve.layer_index,
+                            "axis": fit_curve.axis,
+                            "visible": check.isChecked(),
+                            "color": color,
+                            "alpha": 0.18,
+                            "label": f"95% {kind.capitalize()} Band",
+                        })
 
         # 3. Generate Scientific Report tab
         if self.chk_create_report.isChecked():

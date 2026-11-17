@@ -2468,6 +2468,9 @@ class MainWindow(QMainWindow):
     def open_fit_wizard(self, fit_type: str = "linear"):
         active_graph = self.get_active_graph()
         active_ws = self.get_active_worksheet()
+        view = self.get_active_graph_widget()
+        curve_ids = {c.id for c in active_graph.curves} if active_graph else set()
+        annotation_ids = {id(a) for a in active_graph.annotations} if active_graph else set()
         report_count = len(self.project.reports)
 
         dlg = FitDialog(
@@ -2478,6 +2481,8 @@ class MainWindow(QMainWindow):
             parent=self,
         )
         if dlg.exec():
+            if view is not None and view.graph_model is active_graph:
+                view.record_added_fit_overlays(curve_ids, annotation_ids)
             self._show_analysis_result(report_count)
 
     def open_peak_analysis_wizard(self):

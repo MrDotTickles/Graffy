@@ -46,7 +46,11 @@ Linux, phones, tablets, and Chromebooks do not currently have supported installe
 - Style figures with scientific publication themes and export PNG, PDF, SVG, and TIFF.
 - Add chart notes with **Annotate → Add text note**, then click the plot to place them.
   Double-click a note to change its text, rotation, size, or colors. Drag it to move it.
+  Paste formatted text including superscripts and subscripts. Click a note to show its drag handles for rotation and resizing.
   Undo and Redo restore annotation changes on the chart.
+- **Analysis overlays.** Show or hide the fitted line, confidence band, and available prediction band independently.
+  Use **Analysis overlays** on a chart to change visibility and styling after fitting.
+- **Transpose data.** Select a block and choose **Rows → Swap rows ↔ columns**, or right-click a cell and use **Paste transposed**.
 - Save your workspace as a `.kgraph` project and reopen it later.
 
 ## Updates

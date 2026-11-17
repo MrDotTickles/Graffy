@@ -207,3 +207,30 @@ class AnnotationCommand(QUndoCommand):
 
     def redo(self):
         self._apply(self.after)
+
+
+class FitCurveCommand(QUndoCommand):
+    """Change a fitted line independently of its report and calculated worksheet."""
+
+    def __init__(self, graph, curve, before, after, label):
+        super().__init__(label)
+        self.graph = graph
+        self.curve = curve
+        self.before = before
+        self.after = after
+        self.position = graph.curves.index(curve) if curve in graph.curves else len(graph.curves)
+
+    def _apply(self, state):
+        if state is None:
+            self.graph.remove_curve(self.curve.id)
+            return
+        if self.curve not in self.graph.curves:
+            self.graph.curves.insert(self.position, self.curve)
+        for key, value in state.items():
+            setattr(self.curve, key, value)
+
+    def undo(self):
+        self._apply(self.before)
+
+    def redo(self):
+        self._apply(self.after)

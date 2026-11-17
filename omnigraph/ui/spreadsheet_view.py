@@ -5,8 +5,6 @@ clipboard Copy/Paste, sorting, quick fills, formulas, context menus,
 and native full-fidelity Undo/Redo (QUndoStack).
 """
 
-import os
-import inspect
 import copy
 import re
 from itertools import groupby
@@ -19,7 +17,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemDelegate, QToolBar
 )
 from PyQt6.QtCore import (
-    Qt, QAbstractTableModel, QModelIndex, pyqtSignal, QEvent, QSize, QItemSelectionModel
+    Qt, QAbstractTableModel, QModelIndex, pyqtSignal, QEvent, QSize, QItemSelection, QItemSelectionModel
 )
 from PyQt6.QtGui import QKeySequence, QColor, QBrush, QFont, QUndoStack
 
@@ -592,6 +590,8 @@ class SpreadsheetWidget(QWidget):
         menu.addSeparator()
         insert = menu.addAction("Insert Row Above", self.insert_row_above)
         delete = menu.addAction("Delete Selected Rows", self.delete_selected_rows)
+        menu.addSeparator()
+        swap = menu.addAction("Swap rows ↔ columns", self.transpose_selection)
 
         def update_actions():
             has_columns = self.worksheet.column_count() > 0
@@ -600,6 +600,7 @@ class SpreadsheetWidget(QWidget):
             append.setEnabled(has_columns)
             insert.setEnabled(has_rows_selected)
             delete.setEnabled(has_rows_selected)
+            swap.setEnabled(has_rows_selected)
 
         menu.aboutToShow.connect(update_actions)
 
@@ -664,23 +665,6 @@ class SpreadsheetWidget(QWidget):
         self.table_view.setCurrentIndex(self.model.index(first, 0))
 
     def _delete_row_ranges(self, ranges: list[tuple[int, int]], action: str):
-        has_data = any(
-            value is not None and value != ""
-            for col in self.worksheet.columns
-            for first, count in ranges
-            for value in col.data[first:first + count]
-        )
-        if has_data:
-            total = sum(count for _, count in ranges)
-            answer = QMessageBox.question(
-                self, "Delete Worksheet Rows",
-                f"Delete {total:,} {'row' if total == 1 else 'rows'}, including the data? "
-                "You can undo this change.",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                return
         before = copy.deepcopy(self.worksheet.to_dict())
         for first, count in reversed(ranges):
             self.worksheet.delete_rows(first, count)
@@ -787,6 +771,8 @@ class SpreadsheetWidget(QWidget):
         paste_menu.addAction("Paste with First Row as Headers", lambda: self.paste_selection(force_headers=True))
         paste_menu.addAction("Paste Directly into Cells (Raw)", lambda: self.paste_selection(force_raw=True))
 
+        paste_menu.addAction("Paste transposed", lambda: self.paste_selection(transpose=True))
+        menu.addAction("Swap rows ↔ columns", self.transpose_selection)
         menu.addAction("Clear Cells (Del)", self.clear_selection)
         if index.isValid():
             selection = self.table_view.selectionModel()
@@ -871,7 +857,7 @@ class SpreadsheetWidget(QWidget):
         self._notify_data_modified()
 
     def delete_selected_columns(self, col_indices: Optional[Any] = None, confirm: Optional[bool] = None):
-        """Deletes selected columns with visual selection highlight, confirmation prompt, and undo/redo snapshot tracking."""
+        """Delete selected columns as one undoable edit."""
         if col_indices is None or isinstance(col_indices, bool):
             col_indices = self.get_selected_column_indexes()
             if not col_indices:
@@ -907,15 +893,7 @@ class SpreadsheetWidget(QWidget):
             prompt_text = f"Delete {len(cols)} columns ({', '.join(descs)})?\n\nThis action can be undone with Ctrl+Z."
 
         # Confirmation prompt handling
-        should_prompt = confirm
-        if should_prompt is None:
-            is_offscreen_unmocked = (
-                os.environ.get("QT_QPA_PLATFORM") == "offscreen"
-                and inspect.isbuiltin(QMessageBox.question)
-            )
-            should_prompt = not is_offscreen_unmocked
-
-        if should_prompt:
+        if confirm:
             reply = QMessageBox.question(
                 self,
                 "Confirm Delete Column",
@@ -1048,7 +1026,52 @@ class SpreadsheetWidget(QWidget):
         tsv_data = "\n".join(lines)
         QApplication.clipboard().setText(tsv_data)
 
-    def paste_selection(self, force_headers: bool = False, force_raw: bool = False):
+    def transpose_selection(self):
+        ranges = self.table_view.selectionModel().selection()
+        if len(ranges) != 1:
+            self._notify_data_modified("Select one block of cells to swap its rows and columns.")
+            return
+        selection = ranges[0]
+        top, left = selection.top(), selection.left()
+        height, width = selection.height(), selection.width()
+        if height == width == 1:
+            self._notify_data_modified("Select multiple cells to swap their rows and columns.")
+            return
+        ws = self.worksheet
+        if any(col.formula for col in ws.columns[left:left + max(height, width)]):
+            self._notify_data_modified("Copy the formula results and use Paste transposed to put them in empty cells.")
+            return
+        for c in range(left, min(left + height, ws.column_count())):
+            col = ws.columns[c]
+            outside_start = top if c >= left + width else top + height
+            if (any(v is not None and v != "" for v in col.data[outside_start:top + width])
+                    or any(outside_start <= r < top + width for r in col.masked_rows)):
+                self._notify_data_modified("The result would overwrite other cells. Select the full block or paste transposed into empty cells.")
+                return
+
+        before = copy.deepcopy(ws.to_dict())
+        values = [(r, c, ws.get_cell(top + r, left + c),
+                   ws.columns[left + c].is_row_masked(top + r))
+                  for r in range(height) for c in range(width)]
+        for r, c, _, _ in values:
+            col = ws.columns[left + c]
+            if top + r < len(col.data):
+                col.data[top + r] = None
+            col.mask_row(top + r, False)
+        while ws.column_count() < left + height:
+            ws.add_column()
+        for r, c, value, masked in values:
+            col = ws.columns[left + r]
+            if value is not None or top + c < len(col.data):
+                col.set_value(top + c, value)
+            col.mask_row(top + c, masked)
+        self._record_row_change(before, "Swap rows and columns")
+        target = QItemSelection(self.model.index(top, left),
+                                self.model.index(top + width - 1, left + height - 1))
+        self.table_view.selectionModel().select(target, QItemSelectionModel.SelectionFlag.ClearAndSelect)
+        self._notify_data_modified("Rows and columns swapped. Use Undo to restore the original.")
+
+    def paste_selection(self, force_headers: bool = False, force_raw: bool = False, *, transpose=False):
         """
         Intelligently pastes tables from clipboard (HTML, TSV, CSV, space-delimited, Markdown).
         Ensures external tables are distributed into rows and columns, never dumping into a single cell.
@@ -1065,6 +1088,12 @@ class SpreadsheetWidget(QWidget):
         table = ClipboardTableParser.parse_clipboard(text, html=html)
         if not table:
             return
+
+        if transpose:
+            from itertools import zip_longest
+
+            table = list(zip_longest(*table))
+            force_raw = True
 
         indexes = self.table_view.selectionModel().selectedIndexes()
         start_row = indexes[0].row() if indexes else 0
@@ -1117,7 +1146,10 @@ class SpreadsheetWidget(QWidget):
                 self.worksheet.set_cell(target_r, target_c, val)
 
         after = copy.deepcopy(self.worksheet.to_dict())
-        cmd = WorksheetSnapshotCommand(self.worksheet, before, after, "Paste Table", callback=self.refresh_view)
+        cmd = WorksheetSnapshotCommand(
+            self.worksheet, before, after, "Paste transposed" if transpose else "Paste Table",
+            callback=self.refresh_view,
+        )
         self.undo_stack.push(cmd)
 
         n_rows = len(data_rows)
@@ -1125,6 +1157,12 @@ class SpreadsheetWidget(QWidget):
         msg = f"Pasted table: {n_rows} data row(s) × {n_cols} column(s)"
         if headers_applied:
             msg += " (Headers detected & applied to columns)"
+        if data_rows and n_cols:
+            self.table_view.selectionModel().select(
+                QItemSelection(self.model.index(start_row, start_col),
+                               self.model.index(start_row + n_rows - 1, start_col + n_cols - 1)),
+                QItemSelectionModel.SelectionFlag.ClearAndSelect,
+            )
         self._notify_data_modified(msg)
 
     def clear_selection(self):

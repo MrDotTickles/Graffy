@@ -13,7 +13,7 @@ from PyQt6.QtGui import QAction, QKeySequence, QShortcut, QUndoStack
 
 from omnigraph.core.project import CurveModel, GraphModel, Project
 from omnigraph.core.chart_drop import worksheet_curves
-from omnigraph.core.undo_manager import AnnotationCommand
+from omnigraph.core.undo_manager import AnnotationCommand, FitCurveCommand
 from omnigraph.graphing.canvas import OmniCanvas
 from omnigraph.graphing.themes import THEMES
 from omnigraph.core.plot_editing import PLOT_CHOICES, PLOT_GROUPS, axis_family, change_graph_plot_type
@@ -97,7 +97,7 @@ class GraphViewWidget(QWidget):
         ann_menu.addSeparator()
         manage = ann_menu.addAction("Manage annotations…", self._manage_annotations)
         ann_menu.aboutToShow.connect(lambda: manage.setEnabled(
-            any(ann.get("type") != "band" for ann in self.graph_model.annotations)
+            any(ann.get("type") in {"text", "ref_line"} for ann in self.graph_model.annotations)
         ))
         btn_ann.setMenu(ann_menu)
 
@@ -212,6 +212,8 @@ class GraphViewWidget(QWidget):
         self.canvas_widget.request_annotation_edit.connect(self._edit_annotation)
         self.canvas_widget.request_annotation_remove.connect(self._remove_annotation)
         self.canvas_widget.annotation_moved.connect(self._move_annotation)
+        self.canvas_widget.annotation_transformed.connect(self._transform_annotation)
+        self.canvas_widget.request_manage_overlays.connect(self._manage_analysis_overlays)
         self.canvas_widget.note_placement_changed.connect(self._note_placement_hint)
         layout.addWidget(self.canvas_widget)
 
@@ -322,6 +324,10 @@ class GraphViewWidget(QWidget):
         data_button.setMenu(data_menu)
         self.chart_toolbar.addWidget(data_button)
         self.chart_toolbar.addWidget(self.annotation_menu_button)
+        self.analysis_action = self.chart_toolbar.addAction(icon("chart"), "Analysis overlays…", self._manage_analysis_overlays)
+        self.analysis_action.setToolTip("Show, hide, or style fitted lines, bands, and significance brackets")
+        self._sync_analysis_action()
+        self.undo_stack.indexChanged.connect(self._sync_analysis_action)
         self.chart_toolbar.addWidget(self.edit_chart_button)
         self.chart_toolbar.addWidget(self.change_plot_button)
         self.legend_action = self.chart_toolbar.addAction(icon("legend"), "Legend…", self._open_legend_editor)
@@ -348,7 +354,7 @@ class GraphViewWidget(QWidget):
         copy_action = self.chart_toolbar.addAction(icon("copy"), "Copy graph", self._copy_to_clipboard)
         self._chart_toolbar_buttons = (
             self.chart_toolbar.widgetForAction(bounds_action), data_button, self.annotation_menu_button,
-            self.edit_chart_button,
+            self.chart_toolbar.widgetForAction(self.analysis_action), self.edit_chart_button,
             self.change_plot_button, self.chart_toolbar.widgetForAction(self.legend_action),
             navigation, self.chart_toolbar.widgetForAction(copy_action),
         )
@@ -728,6 +734,7 @@ class GraphViewWidget(QWidget):
         self._sync_plot_type_actions()
         self._update_source_bar()
         self._sync_quick_labels()
+        self._sync_analysis_action()
 
     def _on_theme_changed(self, theme_name: str):
         self.graph_model.theme = theme_name
@@ -767,10 +774,35 @@ class GraphViewWidget(QWidget):
 
         self.canvas_widget.cancel_note_placement()
         dialog = AnnotationDialog(annotation, self, adding=adding)
+        if annotation["type"] == "text":
+            from PyQt6.QtWidgets import QApplication
+
+            manager = self.canvas_widget.plot_manager
+            canvas = self.canvas_widget.canvas
+            if "x" in annotation and "y" in annotation:
+                ax = manager.annotation_axes(annotation)
+                x, y = ax.transData.transform((annotation["x"], annotation["y"]))
+                if np.isfinite([x, y]).all():
+                    ratio = canvas.device_pixel_ratio
+                    anchor = canvas.mapToGlobal(QPoint(round(x / ratio), round(canvas.height() - y / ratio)))
+                    screen = QApplication.screenAt(anchor) or self.screen()
+                    if screen:
+                        area = screen.availableGeometry()
+                        dialog.adjustSize()
+                        left = min(max(area.left(), anchor.x() + 10), max(area.left(), area.right() - dialog.width()))
+                        top = min(max(area.top(), anchor.y() + 10), max(area.top(), area.bottom() - dialog.height()))
+                        dialog.move(left, top)
         if dialog.exec() and dialog.result_annotation is not None:
-            kind = "text note" if annotation["type"] == "text" else "reference line"
+            kind = {"text": "text note", "ref_line": "reference line"}.get(annotation["type"], "analysis overlay")
             action = f"{'Add' if adding else 'Edit'} {kind}"
             self._change_annotation(annotation, None if adding else annotation, dialog.result_annotation, action)
+            if annotation["type"] == "text":
+                self.canvas_widget._select_note(annotation)
+                window = self.window()
+                if hasattr(window, "statusBar"):
+                    window.statusBar().showMessage(
+                        "Drag the box to move it, the square to resize it, or the circle to rotate it.", 5500,
+                    )
 
     def _change_annotation(self, annotation, before, after, action):
         if before != after:
@@ -781,6 +813,70 @@ class GraphViewWidget(QWidget):
 
     def _move_annotation(self, annotation, x, y):
         self._change_annotation(annotation, annotation, {**annotation, "x": x, "y": y}, "Move text note")
+
+    def _transform_annotation(self, annotation, key, value):
+        action = "Rotate text box" if key == "rotation" else "Resize text box"
+        self._change_annotation(annotation, annotation, {**annotation, key: value}, action)
+
+    def _sync_analysis_action(self):
+        has_overlays = any(c.is_fit_curve for c in self.graph_model.curves) or any(
+            a.get("type") in {"band", "bracket", "significance"} for a in self.graph_model.annotations
+        )
+        self.analysis_action.setVisible(has_overlays)
+
+    def _manage_analysis_overlays(self):
+        from omnigraph.ui.dialogs.annotation_dialog import AnnotationListDialog
+
+        self.canvas_widget.cancel_note_placement()
+        AnnotationListDialog(
+            self.graph_model, self._edit_analysis_overlay, self._remove_analysis_overlay, self,
+            toggle=self._toggle_analysis_overlay, analysis=True,
+        ).exec()
+
+    def _edit_analysis_overlay(self, item):
+        from omnigraph.ui.dialogs.annotation_dialog import AnnotationDialog
+
+        if not isinstance(item, CurveModel):
+            self._edit_annotation(item)
+            return
+        snapshot = {"label": item.label, "color": item.color, "line_width": item.line_width,
+                    "line_style": item.line_style, "alpha": item.alpha}
+        dialog = AnnotationDialog({**snapshot, "type": "fit", "style": item.line_style}, self)
+        if dialog.exec() and dialog.result_annotation is not None:
+            result = dialog.result_annotation
+            updated = {key: result[key] for key in snapshot}
+            updated["line_style"] = result["style"]
+            if snapshot != updated:
+                self.undo_stack.push(FitCurveCommand(
+                    self.graph_model, item, snapshot, updated, "Style best-fit line",
+                ))
+
+    def _toggle_analysis_overlay(self, item, visible):
+        action = "Show analysis overlay" if visible else "Hide analysis overlay"
+        if isinstance(item, CurveModel):
+            if item.visible != visible:
+                self.undo_stack.push(FitCurveCommand(
+                    self.graph_model, item, {"visible": item.visible}, {"visible": visible}, action,
+                ))
+        elif item.get("visible", True) != visible:
+            self._change_annotation(item, item, {**item, "visible": visible}, action)
+
+    def _remove_analysis_overlay(self, item):
+        if isinstance(item, CurveModel):
+            self.undo_stack.push(FitCurveCommand(self.graph_model, item, {}, None, "Remove best-fit line"))
+        else:
+            self._remove_annotation(item)
+
+    def record_added_fit_overlays(self, curve_ids, annotation_ids):
+        fits = [c for c in self.graph_model.curves if c.is_fit_curve and c.id not in curve_ids]
+        bands = [a for a in self.graph_model.annotations if id(a) not in annotation_ids and a.get("type") == "band"]
+        if fits or bands:
+            self.undo_stack.beginMacro("Add fit overlays")
+            for curve in fits:
+                self.undo_stack.push(FitCurveCommand(self.graph_model, curve, None, {}, "Add best-fit line"))
+            for band in bands:
+                self._change_annotation(band, None, band, "Add fit band")
+            self.undo_stack.endMacro()
 
     def record_added_peak_notes(self, before):
         added = [note for note in self.graph_model.annotations
