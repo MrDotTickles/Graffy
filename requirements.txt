@@ -1,7 +1,7 @@
 # Graffy - Scientific Graphing & Data Analysis Suite
 # Core runtime dependencies (cross-platform: macOS, Windows, Linux)
 
-PyQt6>=6.5.0
+PyQt6>=6.12.1
 numpy>=1.24.0
 scipy>=1.10.0
 matplotlib>=3.7.0
