@@ -2,7 +2,7 @@
 # Core runtime dependencies (cross-platform: macOS, Windows, Linux)
 
 PyQt6>=6.5.0
-numpy>=1.24.0
+numpy>=2.5.5
 scipy>=1.10.0
 matplotlib>=3.7.0
 pandas>=2.0.0
